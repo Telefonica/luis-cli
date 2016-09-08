@@ -5,6 +5,9 @@
   "license": "UNLICENSED",
   "repository": "https://github.com/Telefonica/yot-bot",
   "author": "TDAF",
+  "bin": {
+    "luis-cli": "./bin/luis-cli"
+  },
   "keywords": [
     "LUIS",
     "bot",
