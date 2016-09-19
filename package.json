@@ -9,9 +9,7 @@
     "luis-cli": "./bin/luis-cli"
   },
   "keywords": [
-    "LUIS",
-    "bot",
-    "fourth platform"
+    "LUIS"
   ],
   "files": [
     "lib"
@@ -29,6 +27,7 @@
   },
   "dependencies": {
     "commander": "^2.9.0",
+    "logops": "^1.0.6",
     "request": "^2.74.0",
     "request-promise-native": "^1.0.3"
   },

@@ -1,4 +1,4 @@
-const debug = require('debug')('luis-app');
+import * as logger from 'logops';
 
 import { LuisClient, Luis } from './luis-api-client';
 
@@ -17,11 +17,11 @@ export class LuisApp {
     export(): Promise<Object> {
         return this._luisClient.export(this._appId)
             .then((appObj: Object) => {
-                debug('App correctly exported with data: %s', JSON.stringify(appObj));
+                logger.debug('App correctly exported with data: %j', appObj);
                 return appObj;
             })
             .catch((err) => {
-                debug('An error occurred while exporting: %s', JSON.stringify(err));
+                logger.error(err, 'An error occurred while exporting');
                 throw err;
             });
     }
@@ -32,28 +32,28 @@ export class LuisApp {
             .then((appId: string) => {
                 newAppId = appId;
 
-                debug('App data has been correctly imported under appId %s', newAppId);
-                console.log('Import finished...');
+                logger.debug('App data has been correctly imported under appId %s', newAppId);
+                logger.debug('Import finished...');
                 return newAppId;
             })
             .then(newAppId => {
-                console.log('Initiating training...');
+                logger.debug('Initiating training...');
                 return this._luisClient.startTraining(newAppId);
             })
             .then(success => {
-                 console.log('Waiting for training to finish...');
+                 logger.debug('Waiting for training to finish...');
                  return this.waitForTraining(newAppId);
             })
             .then(success => {
-                 console.log('Publishing app...');
+                 logger.debug('Publishing app...');
                  return this._luisClient.publish(newAppId);
             })
             .then(publishData => {
-                console.log('App update completed successfully. App publish data is: \n%s', JSON.stringify(publishData));
+                logger.debug('App update completed successfully. App publish data is: %j', publishData);
                 return newAppId;
             })
             .catch((err) => {
-                debug('An error occurred while importing the app: %s', JSON.stringify(err));
+                logger.error(err, 'An error occurred while importing the app');
                 throw err;
             });
     }
@@ -72,61 +72,53 @@ export class LuisApp {
     updateUtterances(appData: any): void {
         this._luisClient.upsertUtterances(this._appId, appData.utterances)
             .then(response => {
-                console.log('Batch update of utterances finished, checking the result...');
+                logger.debug('Batch update of utterances finished, checking the result...');
                 return this.checkUpdate(response);
             })
             .then(success => {
-                console.log('Getting all utterances currently published...');
+                logger.debug('Getting all utterances currently published...');
                 return this.getUtterances(this._appId);
             })
             .then(currentUtterances => {
-                console.log('Searching for stale utterances...');
+                logger.debug('Searching for stale utterances...');
                 return this.getStaleUtterances(appData, currentUtterances);
             })
             .then(staleUtterances => {
-                console.log('Deleting stale utterances...');
+                logger.debug('Deleting stale utterances...');
                 return this.deleteUtterances(staleUtterances);
             })
             .then(deletedUtterances => {
-                console.log('%s utterances were correctly deleted...', deletedUtterances);
+                logger.debug('%s utterances deleted. Initiating training...', deletedUtterances);
                 return this._luisClient.startTraining(this._appId);
             })
             .then(success => {
-                console.log('Initiating training...');
-                return this._luisClient.startTraining(this._appId);
-            })
-            .then(success => {
-                 console.log('Waiting for training to finish...');
+                 logger.debug('Waiting for training to finish...');
                  return this.waitForTraining(this._appId);
             })
             .then(success => {
-                 console.log('Publishing app...');
+                 logger.debug('Publishing app...');
                  return this._luisClient.publish(this._appId);
             })
             .then(publishData => {
-                console.log('App update completed successfully. App publish data is: \n%s', JSON.stringify(publishData));
+                logger.debug('App update completed successfully. App publish data is: %s', publishData);
             })
             .catch((err) => {
-                console.log('An error occurred while importing the app: %s', JSON.stringify(err));
+                logger.error(err, 'An error occurred while importing the app');
                 throw err;
             });
     }
 
-    checkUpdate(updateResults: Luis.UpdateUtteranceResult[]):  Promise<boolean> {
+    checkUpdate(updateResults: Luis.UpdateUtteranceResult[]): Promise<boolean> {
         let checkUpdatePromise: Promise<boolean> = new Promise((resolve, reject) => {
-            let success = true;
             updateResults.forEach(updateResult => {
                 if (updateResult.has_error) {
-                    console.log('Error: %s, updating utterance: %s', updateResult.error, updateResult.utteranceText);
-                    success = false;
+                    logger.error('Error: %s, updating utterance: %s', updateResult.error, updateResult.utteranceText);
+                    reject();
                 }
             });
-            if (success) {
-                resolve(success);
-            } else {
-                reject(success);
-            }
+            resolve(true);
         });
+
         return checkUpdatePromise;
     }
 
@@ -135,7 +127,7 @@ export class LuisApp {
             this._luisClient.getUtterances(this._appId, page * this.PAGE_SIZE, this.PAGE_SIZE)
                 .then(utterancesPage => {
                     if (utterancesPage.length === this.PAGE_SIZE) {
-                        console.log('Page %s of utterances has been obtained', page + 1);
+                        logger.debug('Page %s of utterances has been obtained', page + 1);
                         page = page + 1;
                         this.getUtterances(this._appId, page).then(moreUtterances => {
                             utterancesPage.forEach(utterance => {
@@ -144,12 +136,12 @@ export class LuisApp {
                             resolve(moreUtterances);
                         });
                     } else {
-                        console.log('All utterance obtained after %s pages', page + 1);
+                        logger.debug('All utterance obtained after %s pages', page + 1);
                         resolve(utterancesPage);
                     };
                 })
                 .catch((err) => {
-                    console.log('An error occurred while getting app utterances: %s', JSON.stringify(err));
+                    logger.error(err, 'An error occurred while getting app utterances');
                     reject(err);
                 });
         });
@@ -165,7 +157,7 @@ export class LuisApp {
                         if (success) {
                             deletedUtterances = deletedUtterances + 1;
                         } else {
-                            console.log('There was a problem deleting utterance %s', staleUtterance.text);
+                            logger.debug('There was a problem deleting utterance %s', staleUtterance.text);
                             reject(deletedUtterances);
                         }
                         this.deleteUtterances(staleUtterances, deletedUtterances)
@@ -215,7 +207,7 @@ export class LuisApp {
                     } else {
                           trainingStatuses.forEach(trainingStatus => {
                             if (trainingStatus.details.status === 'Failed') {
-                                console.log('Traning model %s failed. Error %s',
+                                logger.debug('Traning model %s failed. Error %s',
                                                 trainingStatus.modelId,
                                                 trainingStatus.details.failureReason);
                                 failedModels.push(trainingStatus);
@@ -229,7 +221,7 @@ export class LuisApp {
                     }
                 })
                 .catch((err) => {
-                    console.log('An error occurred while waiting for tranining to finish: %s', JSON.stringify(err));
+                    logger.error(err, 'An error occurred while waiting for tranining to finish');
                     reject(err);
                 });
         });

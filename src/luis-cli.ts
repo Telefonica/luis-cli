@@ -3,6 +3,7 @@ import { LuisApp } from './luis-app';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as program from 'commander';
+import * as logger from 'logops';
 
 interface InterfaceCLI extends commander.ICommand {
     export?: string;
@@ -11,6 +12,7 @@ interface InterfaceCLI extends commander.ICommand {
     appid?: string;
     subid?: string;
     appname?: string;
+    verbose?: boolean;
 }
 
 const cli: InterfaceCLI = program
@@ -20,7 +22,12 @@ const cli: InterfaceCLI = program
     .option('-a, --appid [application_id]', 'Microsoft LUIS application id. Optional depending on what you want to do.')
     .option('-s, --subid [subscription_id]', 'Microsoft LUIS subscription id. REQUIRED.')
     .option('-n, --appname [subscription_name]', 'Microsoft LUIS subscription name. Only needed for importing.')
+    .option('-v, --verbose', 'Set verbose mode.')
     .parse(process.argv);
+
+if (cli.verbose) {
+    logger.setLevel('DEBUG');
+}
 
 let luisApp: LuisApp = new LuisApp(cli.appid, cli.subid);
 
@@ -35,25 +42,35 @@ if (cli.export) {
 
             let formattedAppObj = JSON.stringify(appObj, null, 2);
             fs.writeFileSync(cli.export, formattedAppObj);
-            console.log('App exported to file %s', cli.export);
+            logger.debug('App exported to file %s', cli.export);
+
+            console.log(cli.appid);
         })
         .catch((err) => {
-            console.log(JSON.stringify(err));
+            logger.error(err);
+            process.exit(1);
         });
 } else if (cli.import) {
     let appData = JSON.parse(fs.readFileSync(cli.import, 'utf-8'));
 
     luisApp.import(cli.appname, appData)
         .then((appId: string) => {
-            console.log('App data has been imported under appId %s', appId);
+            logger.debug('App data has been imported under appId %s', appId);
+
+            // Write the appId to stdout to use luis-cli output in other tools
+            console.log(appId);
         })
         .catch((err) => {
-            console.log(JSON.stringify(err));
+            logger.error(err);
+            process.exit(1);
         });
 } else if (cli.update) {
     let appData = JSON.parse(fs.readFileSync(cli.update, 'utf-8'));
-    console.log('Updating application');
+    logger.debug('Updating application');
     luisApp.updateUtterances(appData);
+
+    console.log(cli.appid);
 } else {
     console.log('Select --import or --export or --update operation');
+    process.exit(1);
 }

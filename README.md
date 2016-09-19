@@ -19,11 +19,12 @@ Usage: ./bin/luis-cli [options]
 
 Options:
 
-  -h, --help                         output usage information
+  -h, --help                         Show usage information
   -e, --export [filename]            Export application to JSON file. You need to specify an appid.
   -i, --import [filename]            Import application from JSON file. You will get a new appid, don't have to specify one.
   -u, --update [filename]            Update application from JSON file. You need to specify an appid.
   -a, --appid [application_id]       Microsoft LUIS application id. Optional depending on what you want to do.
   -s, --subid [subscription_id]      Microsoft LUIS subscription id. Always REQUIRED.
   -n, --appname [subscription_name]  Microsoft LUIS subscription name. Only needed for importing.
+  -v, --verbose                      Enable verbose mode
 ```

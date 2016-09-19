@@ -1,7 +1,7 @@
 import * as url from 'url';
+import * as logger from 'logops';
 
 const request = require('request-promise-native');
-const debug = require('debug')('luis-client');
 
 export namespace Luis {
     export interface UtteranceEntity {
@@ -62,17 +62,17 @@ export class LuisClient {
     }
 
     export(appId: string): Promise<Object> {
-        debug('Exporting application %s', appId);
+        logger.debug('Exporting application %s', appId);
         return this._baseRequest(`${appId}/export`);
     }
 
     import(appName: string, appData: Object): Promise<Object> {
-        debug('Importing application %s', appName);
+        logger.debug('Importing application %s', appName);
         return this._baseRequest.defaults({body: appData}).post(`/import?appName=${appName}`);
     }
 
     getUtterances(appId: string, skip: number = 0, count: number = this.DEFAULT_PAGE_SIZE): Promise<Luis.Utterance[]> {
-        debug('Getting utterances for application %s', appId);
+        logger.debug('Getting utterances for application %s', appId);
         return this._baseRequest(`${appId}/examples?skip=${skip}&count=${count}`)
             .then((apiExamples: any) => {
                 // Convert from api schema (utterances are called examples) to app data json schema
@@ -102,7 +102,7 @@ export class LuisClient {
      * Updates already existing utterances and creates new ones if they not existed before
      */
     upsertUtterances(appId: string, utterances: Luis.Utterance[]): Promise<Luis.UpdateUtteranceResult[]> {
-        debug('Batch upsert of utterances for application %s', appId);
+        logger.debug('Batch upsert of utterances for application %s', appId);
         // Convert from app data json schema to api schema (utterances are called examples)
         let apiExamples = utterances.map((utterance) => {
             let entityLabels = utterance.entities.map((entity) => {
@@ -138,7 +138,7 @@ export class LuisClient {
     }
 
     deleteUtterance(appId: string, utterance: Luis.Utterance): Promise<boolean> {
-        debug('Deleting utterance for application %s', appId);
+        logger.debug('Deleting utterance for application %s', appId);
         return this._baseRequest.defaults({json: false, resolveWithFullResponse: true})
             .delete(`${appId}/examples/${utterance.id}`)
             .then((response: any) => {
@@ -151,7 +151,7 @@ export class LuisClient {
     }
 
     startTraining(appId: string): Promise<boolean> {
-        debug('Triggering training for application %s', appId);
+        logger.debug('Triggering training for application %s', appId);
         return this._baseRequest.defaults({resolveWithFullResponse: true})
             .post(`${appId}/train`)
             .then((response: any) => {
@@ -164,7 +164,7 @@ export class LuisClient {
     }
 
     getTrainingStatus(appId: string): Promise<Luis.TrainingStatus[]> {
-        debug('Getting training status for application %s', appId);
+        logger.debug('Getting training status for application %s', appId);
         return this._baseRequest(`${appId}/train`)
             .then((trainingStatusAPI: any) => {
               // Convert from api schema to our data interface
@@ -189,7 +189,7 @@ export class LuisClient {
     }
 
     publish(appId: string): Promise<Luis.AppPublishData> {
-        debug('Publishing application %s', appId);
+        logger.debug('Publishing application %s', appId);
         // This has to be done as a workaround as this 'useless' body is required by LUIS API.
         let publishBody = {
             BotFramework: {
