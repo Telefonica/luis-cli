@@ -1,6 +1,6 @@
 {
   "name": "luis-cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "CLI for Microsoft LUIS API",
   "license": "UNLICENSED",
   "repository": "https://github.com/Telefonica/yot-bot",
@@ -9,10 +9,10 @@
     "luis-cli": "./bin/luis-cli"
   },
   "keywords": [
-    "LUIS"
+    "luis"
   ],
   "files": [
-    "lib"
+    "lib", "bin"
   ],
   "scripts": {
     "clean": "rm -fR lib ",
