@@ -15,7 +15,9 @@ Note:
 * App update also automatically triggers training and app publishment.
 
 ```
-Usage: ./bin/luis-cli [options]
+npm install @telefonica/luis-cli
+
+luis-cli [options]
 
 Options:
 
