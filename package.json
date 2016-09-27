@@ -1,10 +1,10 @@
 {
-  "name": "luis-cli",
-  "version": "1.0.1",
+  "name": "@telefonica/luis-cli",
+  "version": "1.0.0",
   "description": "CLI for Microsoft LUIS API",
   "license": "UNLICENSED",
   "repository": "https://github.com/Telefonica/yot-bot",
-  "author": "TDAF",
+  "author": "TDAF <tdaf@tid.es>",
   "bin": {
     "luis-cli": "./bin/luis-cli"
   },
