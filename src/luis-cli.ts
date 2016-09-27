@@ -2,7 +2,7 @@ import { LuisApp } from './luis-app';
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as program from 'commander';
+import * as commander from 'commander';
 import * as logger from 'logops';
 
 interface InterfaceCLI extends commander.ICommand {
@@ -15,7 +15,7 @@ interface InterfaceCLI extends commander.ICommand {
     verbose?: boolean;
 }
 
-const cli: InterfaceCLI = program
+const cli: InterfaceCLI = commander
     .option('-e, --export [filename]', 'Export application to JSON file. You need to specify an appid.')
     .option('-i, --import [filename]', 'Import application from JSON file. You will get a new appid.')
     .option('-u, --update [filename]', 'Update application from JSON file. You need to specify an appid.')
