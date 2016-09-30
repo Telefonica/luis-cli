@@ -12,7 +12,8 @@
     "luis"
   ],
   "files": [
-    "lib", "bin"
+    "lib",
+    "bin"
   ],
   "scripts": {
     "build": "npm run clean && npm run compile",
@@ -25,12 +26,14 @@
   },
   "dependencies": {
     "commander": "^2.9.0",
+    "lodash": "^4.16.2",
     "logops": "^1.0.6",
     "request": "^2.74.0",
     "request-promise-native": "^1.0.3"
   },
   "devDependencies": {
     "@types/commander": "^2.3.30",
+    "@types/lodash": "^4.14.36",
     "@types/node": "^6.0.40",
     "mocha": "^3.0.2",
     "nsp": "^2.6.1",

@@ -1,5 +1,6 @@
 import * as url from 'url';
 import * as logger from 'logops';
+import * as _ from 'lodash';
 
 const request = require('request-promise-native');
 
@@ -119,22 +120,32 @@ export class LuisClient {
             };
         });
 
-        //parse and convert response to Luis.UpdateUtteranceResult schema
-        return this._baseRequest.defaults({body: apiExamples})
-            .post(`${appId}/examples`)
-            .then((response: any) => {
-                let updateResult = response.map((result: any) => {
-                    return {
-                        utteranceText: result.value.UtteranceText,
-                        has_error: result.has_error,
-                        error: result.error
-                    };
-                });
-                return updateResult;
-            })
-            .catch((err: any) => {
-                throw err;
-            });
+        return Promise.all(
+            _.chunk(apiExamples, 100).map(chunk => performRequest(chunk))
+        )
+
+        ///////
+
+        function performRequest(examples:any) {
+            //parse and convert response to Luis.UpdateUtteranceResult schema
+            return this._baseRequest.defaults({body: examples})
+                .post(`${appId}/examples`)
+                .then((response: any) => {
+                    let updateResult = response.map((result: any) => {
+                        return {
+                            utteranceText: result.value.UtteranceText,
+                            has_error: result.has_error,
+                            error: result.error
+                        };
+                    });
+                    return updateResult;
+                })
+                .catch((err: any) => {
+                    throw err;
+                });    
+
+        }
+
     }
 
     deleteUtterance(appId: string, utterance: Luis.Utterance): Promise<boolean> {
