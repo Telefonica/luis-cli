@@ -67,9 +67,16 @@ if (cli.export) {
 } else if (cli.update) {
     let appData = JSON.parse(fs.readFileSync(cli.update, 'utf-8'));
     logger.debug('Updating application');
-    luisApp.updateUtterances(appData);
+    luisApp.updateUtterances(appData)
+        .then(data => {
+            logger.debug(data, 'Application Updated');
+            console.log(cli.appid);
+        })
+        .catch(err => {
+            logger.error(err);
+            process.exit(1);
+        })
 
-    console.log(cli.appid);
 } else {
     console.log('Select --import or --export or --update operation');
     process.exit(1);

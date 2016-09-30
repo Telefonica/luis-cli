@@ -69,8 +69,8 @@ export class LuisApp {
     //4.- it triggers training
     //5.- it waits for training to finish and identifies if there were errors or not
     //6.- TODO: publish the application if all the above steps were successful
-    updateUtterances(appData: any): void {
-        this._luisClient.upsertUtterances(this._appId, appData.utterances)
+    updateUtterances(appData: any): Promise<Luis.AppPublishData> {
+        return this._luisClient.upsertUtterances(this._appId, appData.utterances)
             .then(response => {
                 logger.debug('Batch update of utterances finished, checking the result...');
                 return this.checkUpdate(response);
@@ -98,9 +98,6 @@ export class LuisApp {
             .then(success => {
                  logger.debug('Publishing app...');
                  return this._luisClient.publish(this._appId);
-            })
-            .then(publishData => {
-                logger.debug('App update completed successfully. App publish data is: %s', publishData);
             })
             .catch((err) => {
                 logger.error(err, 'An error occurred while importing the app');
