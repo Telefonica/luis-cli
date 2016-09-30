@@ -120,6 +120,7 @@ export class LuisClient {
             };
         });
 
+        let _baseRequest = this._baseRequest;
         return Promise.all(
             _.chunk(apiExamples, 100).map(chunk => performRequest(chunk))
         )
@@ -128,7 +129,7 @@ export class LuisClient {
 
         function performRequest(examples:any) {
             //parse and convert response to Luis.UpdateUtteranceResult schema
-            return this._baseRequest.defaults({body: examples})
+            return _baseRequest.defaults({body: examples})
                 .post(`${appId}/examples`)
                 .then((response: any) => {
                     let updateResult = response.map((result: any) => {
