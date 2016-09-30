@@ -121,9 +121,11 @@ export class LuisClient {
         });
 
         let _baseRequest = this._baseRequest;
-        return Promise.all(
-            _.chunk(apiExamples, 100).map(chunk => performRequest(chunk))
-        )
+        let promise = Promise.resolve();
+        _.chunk(apiExamples, 100).forEach(chunk => {
+            promise = promise.then(() => performRequest(chunk));
+        })
+        return promise;
 
         ///////
 
