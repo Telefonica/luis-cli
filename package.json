@@ -2,7 +2,7 @@
   "name": "@telefonica/luis-cli",
   "version": "1.0.6",
   "description": "CLI for Microsoft LUIS API",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "repository": "https://github.com/Telefonica/yot-bot",
   "author": "TDAF <tdaf@tid.es>",
   "bin": {
@@ -10,10 +10,6 @@
   },
   "keywords": [
     "luis"
-  ],
-  "files": [
-    "lib",
-    "bin"
   ],
   "scripts": {
     "build": "npm run clean && npm run compile",

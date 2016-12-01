@@ -1,3 +1,19 @@
+/**
+* @license
+* Copyright 2016 Telefónica I+D
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+* http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
 import * as url from 'url';
 import * as logger from 'logops';
 import * as _ from 'lodash';
@@ -124,12 +140,12 @@ export class LuisClient {
         let promise = Promise.resolve();
         _.chunk(apiExamples, 100).forEach(chunk => {
             promise = promise.then(() => performRequest(chunk));
-        })
+        });
         return promise;
 
         ///////
 
-        function performRequest(examples:any) {
+        function performRequest(examples: any) {
             //parse and convert response to Luis.UpdateUtteranceResult schema
             return _baseRequest.defaults({body: examples})
                 .post(`${appId}/examples`)
@@ -145,8 +161,7 @@ export class LuisClient {
                 })
                 .catch((err: any) => {
                     throw err;
-                });    
-
+                });
         }
 
     }
