@@ -137,7 +137,8 @@ export class LuisClient {
         });
 
         let _baseRequest = this._baseRequest;
-        let promise = Promise.resolve();
+
+        let promise = Promise.resolve(<Luis.UpdateUtteranceResult[]>null);
         _.chunk(apiExamples, 100).forEach(chunk => {
             promise = promise.then(() => performRequest(chunk));
         });
@@ -145,17 +146,17 @@ export class LuisClient {
 
         ///////
 
-        function performRequest(examples: any) {
+        function performRequest(examples: any): Promise<Luis.UpdateUtteranceResult[]> {
             //parse and convert response to Luis.UpdateUtteranceResult schema
             return _baseRequest.defaults({body: examples})
                 .post(`${appId}/examples`)
                 .then((response: any) => {
                     let updateResult = response.map((result: any) => {
                         return {
-                            utteranceText: result.value.UtteranceText,
+                            utteranceText: result.value ? result.value.UtteranceText : null,
                             has_error: result.has_error,
                             error: result.error
-                        };
+                        } as Luis.UpdateUtteranceResult;
                     });
                     return updateResult;
                 })

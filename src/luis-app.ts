@@ -20,10 +20,10 @@ import * as logger from 'logops';
 import { LuisClient, Luis } from './luis-api-client';
 
 export class LuisApp {
-    _appId: any = null;
-    _subscriptionId: any = null;
-    _luisClient: LuisClient = null;
-    PAGE_SIZE: number = 100;
+    private _appId: any = null;
+    private _subscriptionId: any = null;
+    private _luisClient: LuisClient = null;
+    private PAGE_SIZE: number = 100;
 
     constructor (appId: string, subscriptionId: string) {
         this._appId = appId;
@@ -45,6 +45,7 @@ export class LuisApp {
 
     import(appName: string, appData: Object): Promise<string> {
         let newAppId: string;
+
         return this._luisClient.import(appName, appData)
             .then((appId: string) => {
                 newAppId = appId;
@@ -53,7 +54,7 @@ export class LuisApp {
                 logger.debug('Import finished...');
                 return newAppId;
             })
-            .then(newAppId => {
+            .then((newAppId: string) => {
                 logger.debug('Initiating training...');
                 return this._luisClient.startTraining(newAppId);
             })
@@ -75,7 +76,7 @@ export class LuisApp {
             });
     }
 
-    //this function orchestrates different actions to update the utterances of an application to be exactly the same as
+    //This function orchestrates different actions to update the utterances of an application to be exactly the same as
     //those specified in appData
     //1.- taking the target appData, it updates in btach mode the existing utterances and creates new ones if necessary
     //2.- it checks the result of the update, producing an error if not all utterances were successfully updated
