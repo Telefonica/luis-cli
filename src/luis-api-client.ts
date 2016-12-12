@@ -223,17 +223,19 @@ export class LuisClient {
         // This has to be done as a workaround as this 'useless' body is required by LUIS API.
         let publishBody = {
             BotFramework: {
-                Enabled: true,
-                AppId: 'string',
-                SubscriptionKey: 'string',
-                Endpoint: 'string'
+                Enabled: false,
+                AppId: '',
+                SubscriptionKey: '',
+                Endpoint: ''
             },
             Slack: {
-                Enabled: true,
-                ClientId: 'string',
-                ClientSecret: 'string',
-                RedirectUri: 'string'
-            }
+                Enabled: false,
+                ClientId: '',
+                ClientSecret: '',
+                RedirectUri: ''
+            },
+            PrivacyStatement: '',
+            TermsOfUse: ''
         };
 
         return this._baseRequest.defaults({body: publishBody})
