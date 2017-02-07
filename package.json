@@ -1,6 +1,6 @@
 {
   "name": "@telefonica/luis-cli",
-  "version": "1.0.8",
+  "version": "2.0.0",
   "description": "CLI for Microsoft LUIS API",
   "license": "Apache-2.0",
   "repository": "https://github.com/Telefonica/yot-bot",
@@ -9,7 +9,7 @@
     "luis-cli": "./bin/luis-cli"
   },
   "keywords": [
-    "luis"
+    "LUIS", "cognitive services", "NLP"
   ],
   "scripts": {
     "build": "npm run clean && npm run compile",
@@ -22,23 +22,26 @@
   },
   "dependencies": {
     "commander": "^2.9.0",
-    "lodash": "^4.16.2",
-    "logops": "^1.0.7",
-    "request": "^2.74.0",
+    "lodash": "^4.17.4",
+    "promise-retry": "^1.1.1",
+    "promise-throttle": "^0.3.1",
+    "request": "^2.79.0",
     "request-promise-native": "^1.0.3"
   },
   "devDependencies": {
-    "@types/commander": "^2.3.30",
-    "@types/lodash": "^4.14.36",
+    "@telefonica/language-model-converter": "^2.5.0",
+    "@types/commander": "^2.3.31",
+    "@types/lodash": "^4.14.52",
     "@types/node": "^6.0.40",
-    "mocha": "^3.0.2",
-    "nsp": "^2.6.1",
-    "shx": "^0.2.1",
-    "tslint": "^4.0.2",
-    "typescript": "^2.1.0"
+    "@types/request-promise-native": "^1.0.2",
+    "mocha": "^3.2.0",
+    "nsp": "^2.6.2",
+    "shx": "^0.2.2",
+    "tslint": "^4.4.2",
+    "typescript": "^2.1.5"
   },
   "engines": {
     "node": "~6.3.0"
   },
-  "typings": "./lib/index.d.ts"
+  "typings": "./lib/luis-trainer.d.ts"
 }
