@@ -17,7 +17,7 @@
 
 import * as fs from 'fs';
 import * as commander from 'commander';
-import { LuisTrainer, LuisTrainerConfig } from './luis-trainer';
+import { LuisTrainer, LuisTrainerConfig, UpdateEvent } from './luis-trainer';
 import { Luis as LuisModel } from '@telefonica/language-model-converter/lib/luis-model';
 
 
@@ -117,19 +117,19 @@ function selectRunner(command: Commands, options: ProgramOptions) {
             if (!filename) {
                 printError('missing JSON file from which the model will be read. Provide one through the `-f, --filename` option.');
             }
-            runner = updateApp(luisTrainer, filename);
+            runner = updateApp(luisTrainer, applicationId, filename);
             break;
 
         case Commands.Export:
             if (!filename) {
                 printError('missing JSON file to which the application will be exported. Provide one through the `-f, --filename` option.');
             }
-            runner = exportApp(luisTrainer, filename);
+            runner = exportApp(luisTrainer, applicationId, filename);
             break;
     }
 }
 
-function updateApp(luisTrainer: LuisTrainer, filename: string): Promise<void> {
+function updateApp(luisTrainer: LuisTrainer, applicationId: string, filename: string): Promise<void> {
     let model: LuisModel.Model;
     try {
         model = JSON.parse(fs.readFileSync(filename, 'utf8'));
@@ -141,18 +141,98 @@ function updateApp(luisTrainer: LuisTrainer, filename: string): Promise<void> {
         }
     }
 
+    console.log(`Updating the application ${applicationId} with the model from "${filename}"...`);
+    console.log();
+    luisTrainer.on('startUpdateIntents', (stats: UpdateEvent) => {
+        console.log(`Updating intents: creating ${stats.create} new intents ` +
+            `and deleting ${stats.delete} intents no longer needed...`);
+    });
+    luisTrainer.on('endUpdateIntents', () => {
+        console.log('Intents successfully updated.');
+        console.log();
+    });
+    luisTrainer.on('startUpdateEntities', (stats: UpdateEvent) => {
+        console.log(`Updating entities: creating ${stats.create} new entities ` +
+            `and deleting ${stats.delete} entities no longer needed...`);
+    });
+    luisTrainer.on('endUpdateEntities', () => {
+        console.log('Entities successfully updated.');
+        console.log();
+    });
+    luisTrainer.on('startUpdatePhraseLists', (stats: UpdateEvent) => {
+        console.log(`Updating phrase lists: creating ${stats.create} new phrase lists ` +
+            `and deleting ${stats.delete} phrase lists no longer needed...`);
+    });
+    luisTrainer.on('endUpdatePhraseLists', () => {
+        console.log('Phrase lists successfully updated.');
+        console.log();
+    });
+    luisTrainer.on('startGetAllExamples', () => {
+        process.stdout.write('Getting all the existing examples ');
+        luisTrainer.on('getExamples', (first: number, last: number) => process.stdout.write('.'));
+    });
+    luisTrainer.on('endGetAllExamples', (numberOfExamples: number) => {
+        console.log(`\nGot ${numberOfExamples} examples.`);
+    });
+    luisTrainer.on('startUpdateExamples', (stats: UpdateEvent) => {
+        console.log(`Updating examples: creating ${stats.create} new examples ` +
+            `and deleting ${stats.delete} examples no longer needed...`);
+
+        let deleted = 0;
+        luisTrainer.on('deleteExample', () => {
+            deleted++;
+            process.stdout.write(`\rDeleted ${deleted}/${stats.delete} examples ` +
+                `(${(deleted / stats.delete * 100).toFixed(0)}%)`);
+            if (deleted >= stats.delete) {
+                console.log();
+            }
+        });
+
+        let created = 0;
+        luisTrainer.on('createExampleBunch', (bunchLength: number) => {
+            created += bunchLength;
+            process.stdout.write(`\rCreated ${created}/${stats.create} examples ` +
+                `(${(created / stats.create * 100).toFixed(0)}%)`);
+            if (created >= stats.create) {
+                console.log();
+            }
+        });
+    });
+    luisTrainer.on('endUpdateExamples', () => {
+        console.log('Examples successfully updated.');
+        console.log();
+    });
+    luisTrainer.on('startTraining', () => {
+        process.stdout.write('Training the application...');
+        luisTrainer.on('trainingProgress', (finished: number, total: number) => {
+            process.stdout.write(`\rTraining the application... ${(finished / total * 100).toFixed(0)}% completed`);
+            if (finished >= total) {
+                console.log();
+                console.log();
+            }
+        });
+    });
+    luisTrainer.on('startPublish', () => {
+        console.log('Publishing the application...');
+    });
+    luisTrainer.on('endPublish', () => {
+        console.log('Application successfully published.');
+        console.log();
+    });
+
     return luisTrainer.update(model)
         .then(() => {
-            console.log('Application updated');
+            console.log('The application has been successfully updated');
         })
         .catch(handleError);
 }
 
-function exportApp(luisTrainer: LuisTrainer, filename: string): Promise<void> {
+function exportApp(luisTrainer: LuisTrainer, applicationId: string, filename: string): Promise<void> {
+    console.log(`Exporting the application ${applicationId} to "${filename}"...`);
     return luisTrainer.export()
         .then(model => {
             fs.writeFileSync(filename, JSON.stringify(model, null, 2));
-            console.log('Application exported');
+            console.log(`The application has been exported to "${filename}"`);
         })
         .catch(handleError);
 }
@@ -164,7 +244,10 @@ function printError(msg: string) {
     process.exit(1);
 }
 
-function handleError(err: Error) {
+function handleError(err: any) {
     console.error(`ERROR: ${err.message}`);
+    if (err.reason) {
+        console.error(err.reason);
+    }
     process.exit(1);
 }

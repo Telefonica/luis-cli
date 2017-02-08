@@ -16,10 +16,16 @@
 */
 
 import * as _ from 'lodash';
+import { EventEmitter } from 'events';
 import { LuisApiClient, LuisApiClientConfig, LuisApi } from './luis-api-client';
 import { Luis as LuisModel } from '@telefonica/language-model-converter/lib/luis-model';
 
 const TRAINING_STATUS_POLLING_INTERVAL = 2000;
+
+export interface UpdateEvent {
+    create: number;
+    delete: number;
+}
 
 interface RecognizedEntity {
     word: string;
@@ -31,10 +37,11 @@ export interface LuisTrainerConfig {
     luisApiClientConfig: LuisApiClientConfig;
 }
 
-export class LuisTrainer {
+export class LuisTrainer extends EventEmitter {
     private readonly luisApiClient: LuisApiClient;
 
     constructor(config: LuisTrainerConfig) {
+        super();
         this.luisApiClient = new LuisApiClient(config.luisApiClientConfig);
     }
 
@@ -58,20 +65,28 @@ export class LuisTrainer {
             .then(() => Promise.resolve());
     }
 
+    private wrapError(error: Error, message: string) {
+        if (error.name === 'OwnError') {
+            return Promise.reject(error);
+        }
+        let err = new Error(message) as any;
+        err.reason = error.message;
+        return Promise.reject(err);
+    }
+
     private checkCulture(culture: string): Promise<void> {
         return this.luisApiClient.getApp()
             .then(appInfo => {
                 if (appInfo.culture === culture) {
                     return Promise.resolve();
                 } else {
-                    throw new Error(`Model culture (${culture}) doesn't match the target app culture (${appInfo.culture})`);
+                    let err = new Error(`The model culture (${culture}) doesn't match ` +
+                        `the target application culture (${appInfo.culture})`);
+                    err.name = 'OwnError';
+                    throw err;
                 }
             })
-            .catch((reason: Error) => {
-                let err = new Error('Error trying to check the culture') as any;
-                err.reason = reason.message;
-                return Promise.reject(err);
-            });
+            .catch(err => this.wrapError(err, 'Error trying to check the culture'));
     }
 
     private updateIntents(newIntents: string[]): Promise<void> {
@@ -83,15 +98,18 @@ export class LuisTrainer {
                 let intentsToBeCreated = _.differenceWith(newIntents, oldIntents,
                     (a: string, b: LuisApi.IntentClassifier) => a === b.name
                 );
+                let stats: UpdateEvent = {
+                    create: intentsToBeCreated.length,
+                    delete: intentIdsToBeDeleted.length
+                };
+                this.emit('startUpdateIntents', stats);
                 return this.luisApiClient.deleteIntents(intentIdsToBeDeleted)
                     .then(() => this.luisApiClient.createIntents(intentsToBeCreated))
-                    .then(() => Promise.resolve())
-                    .catch((reason: Error) => {
-                        let err = new Error('Error trying to update intents') as any;
-                        err.reason = reason.message;
-                        return Promise.reject(err);
+                    .then(() => {
+                        this.emit('endUpdateIntents', stats);
                     });
-            });
+            })
+            .catch(err => this.wrapError(err, 'Error trying to update intents'));
     }
 
     private updateEntities(newEntities: string[]): Promise<void> {
@@ -103,15 +121,18 @@ export class LuisTrainer {
                 let entitiesToBeCreated = _.differenceWith(newEntities, oldEntities,
                     (a: string, b: LuisApi.EntityExtractor) => a === b.name
                 );
+                let stats: UpdateEvent = {
+                    create: entitiesToBeCreated.length,
+                    delete: entityIdsToBeDeleted.length
+                };
+                this.emit('startUpdateEntities', stats);
                 return this.luisApiClient.deleteEntities(entityIdsToBeDeleted)
                     .then(() => this.luisApiClient.createEntities(entitiesToBeCreated))
-                    .then(() => Promise.resolve())
-                    .catch((reason: Error) => {
-                        let err = new Error('Error trying to update entities') as any;
-                        err.reason = reason.message;
-                        return Promise.reject(err);
+                    .then(() => {
+                        this.emit('endUpdateEntities', stats);
                     });
-            });
+            })
+            .catch(err => this.wrapError(err, 'Error trying to update entities'));
     }
 
     private updatePhraseLists(newPhraseLists: LuisModel.ModelFeature[]): Promise<void> {
@@ -132,20 +153,27 @@ export class LuisTrainer {
                         phrases: phraseList.words
                     } as LuisApi.PhraseList;
                 });
+                let stats: UpdateEvent = {
+                    create: phraseListToBeCreated.length,
+                    delete: phraseListIdsToBeDeleted.length
+                };
+                this.emit('startUpdatePhraseLists', stats);
                 return this.luisApiClient.deletePhraseLists(phraseListIdsToBeDeleted)
                     .then(() => this.luisApiClient.createPhraseLists(phraseListToBeCreated))
-                    .then(() => Promise.resolve())
-                    .catch((reason: Error) => {
-                        let err = new Error('Error trying to update phrase lists') as any;
-                        err.reason = reason.message;
-                        return Promise.reject(err);
+                    .then(() => {
+                        this.emit('endUpdatePhraseLists', stats);
                     });
-            });
+            })
+            .catch(err => this.wrapError(err, 'Error trying to update phrase lists'));
     }
 
     private updateExamples(newExamples: LuisModel.Utterance[]): Promise<void> {
+        this.emit('startGetAllExamples');
+        this.luisApiClient.on('getExamples', (first: number, last: number) =>
+            this.emit('getExamples', first, last));
         return this.luisApiClient.getAllExamples()
             .then(oldExamples => {
+                this.emit('endGetAllExamples', oldExamples.length);
                 let exampleIdsToBeDeleted = _.differenceWith(oldExamples, newExamples,
                     (a: LuisApi.LabeledUtterance, b: LuisModel.Utterance) => a.utteranceText === b.text
                 ).map(example => example.id);
@@ -189,15 +217,22 @@ export class LuisTrainer {
                     } as LuisApi.Example;
                 });
 
+                let stats: UpdateEvent = {
+                    create: examplesToBeCreated.length,
+                    delete: exampleIdsToBeDeleted.length
+                };
+                this.emit('startUpdateExamples', stats);
+                this.luisApiClient.on('deleteExample', (exampleId: string) =>
+                    this.emit('deleteExample', exampleId));
+                this.luisApiClient.on('createExampleBunch', (bunchLength: number) =>
+                    this.emit('createExampleBunch', bunchLength));
                 return this.luisApiClient.deleteExamples(exampleIdsToBeDeleted)
                     .then(() => this.luisApiClient.createExamples(examplesToBeCreated))
-                    .then(() => Promise.resolve())
-                    .catch((reason: Error) => {
-                        let err = new Error('Error trying to update examples') as any;
-                        err.reason = reason.message;
-                        return Promise.reject(err);
+                    .then(() => {
+                        this.emit('endUpdateExamples', stats);
                     });
-            });
+            })
+            .catch(err => this.wrapError(err, 'Error trying to update examples'));
     }
 
     private train(): Promise<void> {
@@ -207,54 +242,52 @@ export class LuisTrainer {
             });
         };
 
-        const waitForTraining2 = (): Promise<void> => {
-            return delay(TRAINING_STATUS_POLLING_INTERVAL);
-        };
-
         const waitForTraining = (): Promise<void> => {
             return delay(TRAINING_STATUS_POLLING_INTERVAL)
                 .then(() => this.luisApiClient.getTrainingStatus())
                 .then((trainingStatus: LuisApi.TrainingStatus) => {
-                    let finished = trainingStatus.every(modelStatus =>
+                    let finishedModels = trainingStatus.filter(modelStatus =>
                         // The training has finished when the status is "Up to date" or when there is a failure.
                         // Probably there is a status that signal a failure but due to the lack of documentation
                         // we'll look for the existence of a failure reason
-                        modelStatus.status === LuisApi.TrainingStatuses.UpToDate || !!modelStatus.failureReason
-                    );
-                    if (!finished) {
+                        modelStatus.status === LuisApi.TrainingStatuses.UpToDate || !!modelStatus.failureReason);
+                    this.emit('trainingProgress', finishedModels.length, trainingStatus.length);
+                    // let finished = trainingStatus.every(modelStatus =>
+                    //     modelStatus.status === LuisApi.TrainingStatuses.UpToDate || !!modelStatus.failureReason
+                    // );
+                    if (finishedModels.length < trainingStatus.length) {
                         return waitForTraining();
                     }
                     // Look for failures
                     let failedModels = trainingStatus.filter(modelStatus => modelStatus.failureReason);
                     if (failedModels.length) {
-                        throw new Error(
+                        let err = new Error(
                             `${failedModels.length} model(s) have failed with the following reasons:\n` +
                             failedModels.map(model => `${model.modelId}: ${model.failureReason}`).join('\n')
                         );
+                        err.name = 'OwnError';
+                        throw err;
                     } else {
+                        this.emit('endTraining');
                         return Promise.resolve();
                     }
                 });
         };
 
+        this.emit('startTraining');
         return this.luisApiClient.startTraining()
             .then(() => waitForTraining())
             // TODO: Catch the error when there already is a training ongoing to wait for it
-            .catch((reason: Error) => {
-                let err = new Error('Error trying to train models') as any;
-                err.reason = reason.message;
-                return Promise.reject(err);
-            });
+            .catch(err => this.wrapError(err, 'Error trying to train models'));
     }
 
     private publish(): Promise<void> {
+        this.emit('startPublish');
         return this.luisApiClient.publish()
-            .then(publishResult => Promise.resolve())
-            .catch((reason: Error) => {
-                let err = new Error('Error trying to publish the app') as any;
-                err.reason = reason.message;
-                return Promise.reject(err);
-            });
+            .then(publishResult => {
+                this.emit('endPublish');
+            })
+            .catch(err => this.wrapError(err, 'Error trying to publish the app'));
     }
 
     /**
