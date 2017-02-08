@@ -19,6 +19,7 @@ import * as request from 'request-promise-native';
 import * as _ from 'lodash';
 const promiseRetry = require('promise-retry');
 const PromiseThrottle = require('promise-throttle');
+import { EventEmitter } from 'events';
 import { RequestResponse } from 'request';
 // Fix the `RequestResponse` interface exported by the `request` module which is missing the `body` property
 declare module 'request' {
@@ -127,12 +128,13 @@ export interface LuisApiClientConfig {
     requestsPerSecond?: number;
 }
 
-export class LuisApiClient {
+export class LuisApiClient extends EventEmitter {
     protected applicationId: string = null;
     private readonly req: any;
     private readonly promiseThrottle: any;
 
     constructor(config: LuisApiClientConfig) {
+        super();
         this.applicationId = config.applicationId;
         let baseUrl = config.baseUrl || LUIS_API_BASE_URL;
         this.req = request.defaults({
@@ -158,6 +160,7 @@ export class LuisApiClient {
             return this.req(opts)
                 .then((res: RequestResponse) => {
                     if (res.statusCode === 429) {
+                        this.emit('tooManyRequests');
                         return retry(new Error('LuisApiClient: The maximum number of retries has been reached'));
                     }
                     if (res.statusCode !== expectedStatusCode) {
@@ -219,8 +222,14 @@ export class LuisApiClient {
             body: { name: intentName }
         };
         return this.retryRequest(opts, 201)
-            // intentId
-            .then((res: RequestResponse) => res.body);
+            .then((res: RequestResponse) => res.body)
+            .then(intentId => {
+                this.emit('createIntent', {
+                    id: intentId,
+                    name: intentName
+                });
+                return intentId;
+            });
     }
 
     createIntents(intentNames: string[]): Promise<string[]> {
@@ -233,7 +242,9 @@ export class LuisApiClient {
             uri: `${this.applicationId}/intents/${intentId}`
         };
         return this.retryRequest(opts, 200)
-            .then(() => Promise.resolve());
+            .then(() => {
+                this.emit('deleteIntent', intentId);
+            });
     }
 
     deleteIntents(intentIds: string[]): Promise<void> {
@@ -263,8 +274,14 @@ export class LuisApiClient {
             body: { name: entityName }
         };
         return this.retryRequest(opts, 201)
-            // entityId
-            .then((res: RequestResponse) => res.body);
+            .then((res: RequestResponse) => res.body)
+            .then(entityId => {
+                this.emit('createEntity', {
+                    id: entityId,
+                    name: entityName
+                });
+                return entityId;
+            });
     }
 
     createEntities(entityNames: string[]): Promise<string[]> {
@@ -277,7 +294,9 @@ export class LuisApiClient {
             uri: `${this.applicationId}/entities/${entityId}`
         };
         return this.retryRequest(opts, 200)
-            .then(() => Promise.resolve());
+            .then(() => {
+                this.emit('deleteEntity', entityId);
+            });
     }
 
     deleteEntities(entityIds: string[]): Promise<void> {
@@ -318,8 +337,14 @@ export class LuisApiClient {
                 }
         };
         return this.retryRequest(opts, 201)
-            // phraseListId
-            .then((res: RequestResponse) => res.body);
+            .then((res: RequestResponse) => res.body)
+            .then(phraseListId => {
+                this.emit('createPhraseList', {
+                    id: phraseListId,
+                    name: phraseList.name
+                });
+                return phraseListId;
+            });
     }
 
     createPhraseLists(phraseLists: LuisApi.PhraseList[]): Promise<string[]> {
@@ -332,7 +357,9 @@ export class LuisApiClient {
             uri: `${this.applicationId}/phraselists/${phraseListId}`
         };
         return this.retryRequest(opts, 200)
-            .then(() => Promise.resolve());
+            .then(() => {
+                this.emit('deletePhraseList', phraseListId);
+            });
     }
 
     deletePhraseLists(phraseListIds: string[]): Promise<void> {
@@ -347,7 +374,15 @@ export class LuisApiClient {
             qs: { skip, count }
         };
         return this.retryRequest(opts, 200)
-            .then((res: RequestResponse) => res.body.map((example: any) => {
+            .then((res: RequestResponse) => {
+                let examples = res.body;
+                if (examples.length) {
+                    // Don't emit events once the last example has been reached
+                    this.emit('getExamples', skip, skip + examples.length - 1);
+                }
+                return examples;
+            })
+            .then(examples => examples.map((example: any) => {
                 let utterance: LuisApi.LabeledUtterance = {
                     id: example.exampleId,
                     utteranceText: example.utteranceText,
@@ -415,6 +450,7 @@ export class LuisApiClient {
                         return Promise.reject(new Error('LuisApiClient: The following examples have errors:\n'
                             + JSON.stringify(errors, null, 2)));
                     }
+                    this.emit('createExampleBunch', examples.length);
                     return body.map(r => r.value.ExampleId.toString());
                 });
         };
@@ -431,7 +467,9 @@ export class LuisApiClient {
             uri: `${this.applicationId}/examples/${exampleId}`
         };
         return this.retryRequest(opts, 200)
-            .then(() => Promise.resolve());
+            .then(() => {
+                this.emit('deleteExample', exampleId);
+            });
     }
 
     deleteExamples(exampleIds: string[]): Promise<void> {
