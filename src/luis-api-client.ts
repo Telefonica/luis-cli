@@ -1,6 +1,6 @@
 /**
 * @license
-* Copyright 2016 Telefónica I+D
+* Copyright 2017 Telefónica I+D
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -14,252 +14,497 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 */
-import * as url from 'url';
-import * as logger from 'logops';
+
+import * as request from 'request-promise-native';
 import * as _ from 'lodash';
-
-const request = require('request-promise-native');
-
-export namespace Luis {
-    export interface UtteranceEntity {
-        entity: string;
-        startPos: number;
-        endPos: number;
-    }
-
-    export interface Utterance {
-        text: string;
-        intent: string;
-        id?: string;
-        entities: UtteranceEntity[];
-    }
-
-    export interface UpdateUtteranceResult {
-        utteranceText: string;
-        has_error: boolean;
-        error: string;
-    }
-
-    export interface TrainingStatusDetails {
-        statusId: number;
-        status: string;
-        trainingTime: string;
-        exampleCount: number;
-        trainingDuration: string;
-        failureReason: string;
-    }
-
-    export interface TrainingStatus {
-        modelId: string;
-        details: TrainingStatusDetails;
-    }
-
-    export interface AppPublishData {
-        url: string;
-        previewUrl: string;
-        subscriptionKey: string;
-        publishDate: string;
+const promiseRetry = require('promise-retry');
+const PromiseThrottle = require('promise-throttle');
+import { RequestResponse } from 'request';
+// Fix the `RequestResponse` interface exported by the `request` module which is missing the `body` property
+declare module 'request' {
+    interface RequestResponse {
+        body?: any;
     }
 }
 
-export class LuisClient {
-    BASE_API_PATH = 'https://api.projectoxford.ai/luis/v1.0/prog/apps/';
-    _baseRequest: any = null;
-    DEFAULT_PAGE_SIZE = 100;
+export namespace LuisApi {
+    export interface AppInfo {
+        id: string;
+        name: string;
+        description: string;
+        culture: string;
+        active: boolean;
+        numberOfIntents: number;
+        numberOfEntities: number;
+        isTrained: boolean;
+    }
 
-    constructor(subscriptionId: string) {
-        this._baseRequest = request.defaults({
-            baseUrl: this.BASE_API_PATH,
+    export interface IntentClassifier {
+        id: string;
+        name: string;
+    }
+
+    export interface EntityExtractor {
+        id: string;
+        name: string;
+    }
+
+    export enum PhraseListModes { Exchangeable, NonExchangeable }
+
+    export interface PhraseList {
+        id?: string;
+        name: string;
+        mode: PhraseListModes;
+        isActive?: boolean;
+        editable?: boolean;
+        phrases: string;
+    }
+
+    export interface LabeledEntity {
+        name: string;
+        startToken: number;
+        endToken: number;
+        word: string;
+        isBuiltInExtractor: boolean;
+    }
+
+    export interface LabeledUtterance {
+        id: string;
+        utteranceText: string;
+        intent: string;
+        entities: LabeledEntity[];
+    }
+
+    export interface Entity {
+        entityType: string;
+        startToken: number;
+        endToken: number;
+    }
+
+    export interface Example {
+        exampleText: string;
+        selectedIntentName: string;
+        entityLabels?: Entity[];
+    }
+
+    export enum TrainingStatuses { UpToDate = 2, InProgress = 3 }
+
+    export interface ModelTrainingStatus {
+        modelId: string;
+        status: TrainingStatuses;
+        exampleCount: number;
+        failureReason?: string;
+    }
+
+    export type TrainingStatus = ModelTrainingStatus[];
+
+    export interface PublishResult {
+        url: string;
+        subscriptionKey: string;
+        publishDate: Date;
+    }
+}
+
+const LUIS_API_BASE_URL = 'https://westus.api.cognitive.microsoft.com';
+const RETRY_OPTS = {
+    retries: 10,
+    factor: 2,
+    minTimeout: 1500
+};
+// Maximum number of parallel requests per second to send to the API (to minimize 429 rate errors)
+const REQUESTS_PER_SECOND = 4;
+// count parameter of the getExamples API (the API doesn't support more than 100)
+const MAX_EXAMPLES_COUNT = 100;
+// Number of parallel getExamples requests to get all the examples (still rated by REQUESTS_PER_SECOND)
+const MAX_PARALLEL_EXAMPLES_REQUESTS = 15;
+// Maximum number of examples that can be created at the same time (the API doesn't support more than 100)
+const MAX_EXAMPLES_UPLOAD = 100;
+
+export interface LuisApiClientConfig {
+    baseUrl?: string;
+    applicationId: string;
+    subscriptionKey: string;
+    requestsPerSecond?: number;
+}
+
+export class LuisApiClient {
+    protected applicationId: string = null;
+    private readonly req: any;
+    private readonly promiseThrottle: any;
+
+    constructor(config: LuisApiClientConfig) {
+        this.applicationId = config.applicationId;
+        let baseUrl = config.baseUrl || LUIS_API_BASE_URL;
+        this.req = request.defaults({
+            baseUrl: `${baseUrl}/luis/v1.0/prog/apps`,
             headers: {
-                'Ocp-Apim-Subscription-Key': subscriptionId,
-                'Accept': 'application/json'
+                'Ocp-Apim-Subscription-Key': config.subscriptionKey
             },
-            json: true
+            json: true,
+            simple: false,
+            resolveWithFullResponse: true
         });
-    }
-
-    export(appId: string): Promise<Object> {
-        logger.debug('Exporting application %s', appId);
-        return this._baseRequest(`${appId}/export`);
-    }
-
-    import(appName: string, appData: Object): Promise<Object> {
-        logger.debug('Importing application %s', appName);
-        return this._baseRequest.defaults({body: appData}).post(`/import?appName=${appName}`);
-    }
-
-    getUtterances(appId: string, skip: number = 0, count: number = this.DEFAULT_PAGE_SIZE): Promise<Luis.Utterance[]> {
-        logger.debug('Getting utterances for application %s', appId);
-        return this._baseRequest(`${appId}/examples?skip=${skip}&count=${count}`)
-            .then((apiExamples: any) => {
-                // Convert from api schema (utterances are called examples) to app data json schema
-                let utterances = apiExamples.map((apiExample: any) => {
-                    let entities = apiExample.EntitiesResults.map((item: any) => {
-                        return {
-                            entity: item.name,
-                            startPos: item.indeces.startToken,
-                            endPos: item.indeces.endToken
-                        };
-                    });
-                    return {
-                        text: apiExample.utteranceText,
-                        intent: apiExample.IntentsResults.Name,
-                        id: apiExample.exampleId,
-                        entities: entities
-                    };
-                });
-                return utterances;
-            })
-            .catch((err: any) => {
-                throw err;
-            });
+        this.promiseThrottle = new PromiseThrottle({
+            requestsPerSecond: config.requestsPerSecond || REQUESTS_PER_SECOND,
+            promiseImplementation: Promise
+        });
     }
 
     /**
-     * Updates already existing utterances and creates new ones if they not existed before
+     * Sends a request gracefully managing "429 Too many requests" errors, retrying the request a bit later
      */
-    upsertUtterances(appId: string, utterances: Luis.Utterance[]): Promise<Luis.UpdateUtteranceResult[]> {
-        logger.debug('Batch upsert of utterances for application %s', appId);
-        // Convert from app data json schema to api schema (utterances are called examples)
-        let apiExamples = utterances.map((utterance) => {
-            let entityLabels = utterance.entities.map((entity) => {
-                return {
-                    EntityType: entity.entity,
-                    StartToken: this.getStartChar(utterance.text, entity.startPos),
-                    EndToken: this.getEndChar(utterance.text, entity.endPos)
-                };
-            });
-            return {
-                ExampleText: utterance.text,
-                SelectedIntentName: utterance.intent,
-                EntityLabels: entityLabels
-            };
-        });
-
-        let _baseRequest = this._baseRequest;
-
-        let promise = Promise.resolve(<Luis.UpdateUtteranceResult[]>null);
-        _.chunk(apiExamples, 100).forEach(chunk => {
-            promise = promise.then(() => performRequest(chunk));
-        });
-        return promise;
-
-        ///////
-
-        function performRequest(examples: any): Promise<Luis.UpdateUtteranceResult[]> {
-            //parse and convert response to Luis.UpdateUtteranceResult schema
-            return _baseRequest.defaults({body: examples})
-                .post(`${appId}/examples`)
-                .then((response: any) => {
-                    let updateResult = response.map((result: any) => {
-                        return {
-                            utteranceText: result.value ? result.value.UtteranceText : null,
-                            has_error: result.has_error,
-                            error: result.error
-                        } as Luis.UpdateUtteranceResult;
-                    });
-                    return updateResult;
-                })
-                .catch((err: any) => {
-                    throw err;
+    private retryRequest(opts: request.Options, expectedStatusCode: number): Promise<RequestResponse> {
+        return promiseRetry((retry: Function, number: number) => {
+            return this.req(opts)
+                .then((res: RequestResponse) => {
+                    if (res.statusCode === 429) {
+                        return retry(new Error('LuisApiClient: The maximum number of retries has been reached'));
+                    }
+                    if (res.statusCode !== expectedStatusCode) {
+                        return Promise.reject(new Error(`LuisApiClient: Unexpected status code: ${res.statusCode}:\n` +
+                            JSON.stringify(res.body, null, 2)));
+                    }
+                    return res;
                 });
-        }
-
+        }, RETRY_OPTS);
     }
 
-    deleteUtterance(appId: string, utterance: Luis.Utterance): Promise<boolean> {
-        logger.debug('Deleting utterance for application %s', appId);
-        return this._baseRequest.defaults({json: false, resolveWithFullResponse: true})
-            .delete(`${appId}/examples/${utterance.id}`)
-            .then((response: any) => {
-                let success = response.statusCode === 200;
-                return success;
-            })
-            .catch((err: any) => {
-                throw err;
+    /**
+     * Executes `fn` once per each element in `items` in parallel but throttling the execution
+     */
+    private throttler(fn: Function, items: any[]): Promise<any> {
+        let promises = items.map(item => this.promiseThrottle.add(fn.bind(this, item)));
+        return Promise.all(promises);
+    }
+
+    getApp(): Promise<LuisApi.AppInfo> {
+        let opts: request.Options = {
+            method: 'GET',
+            uri: this.applicationId
+        };
+        return this.retryRequest(opts, 200)
+            .then((res: RequestResponse) => res.body)
+            .then(body => {
+                return {
+                    id: body.ID,
+                    name: body.Name,
+                    description: body.Description,
+                    culture: body.Culture,
+                    active: body.Active,
+                    numberOfIntents: body.NumberOfIntents,
+                    numberOfEntities: body.NumberOfEntities,
+                    isTrained: body.IsTrained
+                } as LuisApi.AppInfo;
             });
     }
 
-    startTraining(appId: string): Promise<boolean> {
-        logger.debug('Triggering training for application %s', appId);
-        return this._baseRequest.defaults({resolveWithFullResponse: true})
-            .post(`${appId}/train`)
-            .then((response: any) => {
-                let success = response.statusCode === 202;
-                return success;
-            })
-            .catch((err: any) => {
-                throw err;
-            });
+    getIntents(): Promise<LuisApi.IntentClassifier[]> {
+        let opts: request.Options = {
+            method: 'GET',
+            uri: `${this.applicationId}/intents`
+        };
+        return this.retryRequest(opts, 200)
+            .then((res: RequestResponse) => res.body.map((intent: any) => {
+                return {
+                    id: intent.id,
+                    name: intent.name
+                } as LuisApi.IntentClassifier;
+            }));
     }
 
-    getTrainingStatus(appId: string): Promise<Luis.TrainingStatus[]> {
-        logger.debug('Getting training status for application %s', appId);
-        return this._baseRequest(`${appId}/train`)
-            .then((trainingStatusAPI: any) => {
-              // Convert from api schema to our data interface
-              let trainingStatus = trainingStatusAPI.map((status: any) => {
-                  return {
-                      modelId: status.ModelId,
-                      details: {
-                          statusId: status.Details.StatusId,
-                          status: status.Details.Status,
-                          trainingTime: status.Details.TrainingTime,
-                          exampleCount: status.Details.ExampleCount,
-                          trainingDuration: status.Details.TrainingDuration,
-                          failureReason: status.Details.FailureReason
-                      }
-                  };
-              });
-              return trainingStatus;
-          })
-          .catch((err: any) => {
-              throw err;
-          });
+    createIntent(intentName: string): Promise<string> {
+        let opts: request.Options = {
+            method: 'POST',
+            uri: `${this.applicationId}/intents`,
+            body: { name: intentName }
+        };
+        return this.retryRequest(opts, 201)
+            // intentId
+            .then((res: RequestResponse) => res.body);
     }
 
-    publish(appId: string): Promise<Luis.AppPublishData> {
-        logger.debug('Publishing application %s', appId);
-        // This has to be done as a workaround as this 'useless' body is required by LUIS API.
-        let publishBody = {
-            BotFramework: {
-                Enabled: false,
-                AppId: '',
-                SubscriptionKey: '',
-                Endpoint: ''
-            },
-            Slack: {
-                Enabled: false,
-                ClientId: '',
-                ClientSecret: '',
-                RedirectUri: ''
-            },
-            PrivacyStatement: '',
-            TermsOfUse: ''
+    createIntents(intentNames: string[]): Promise<string[]> {
+        return this.throttler(this.createIntent, intentNames) as Promise<string[]>;
+    }
+
+    deleteIntent(intentId: string): Promise<void> {
+        let opts: request.Options = {
+            method: 'DELETE',
+            uri: `${this.applicationId}/intents/${intentId}`
+        };
+        return this.retryRequest(opts, 200)
+            .then(() => Promise.resolve());
+    }
+
+    deleteIntents(intentIds: string[]): Promise<void> {
+        return this.throttler(this.deleteIntent, intentIds)
+            .then(() => Promise.resolve());
+
+    }
+
+    getEntities(): Promise<LuisApi.EntityExtractor[]> {
+        let opts: request.Options = {
+            method: 'GET',
+            uri: `${this.applicationId}/entities`
+        };
+        return this.retryRequest(opts, 200)
+            .then((res: RequestResponse) => res.body.map((entity: any) => {
+                return {
+                    id: entity.id,
+                    name: entity.name
+                } as LuisApi.EntityExtractor;
+            }));
+    }
+
+    createEntity(entityName: string): Promise<string> {
+        let opts: request.Options = {
+            method: 'POST',
+            uri: `${this.applicationId}/entities`,
+            body: { name: entityName }
+        };
+        return this.retryRequest(opts, 201)
+            // entityId
+            .then((res: RequestResponse) => res.body);
+    }
+
+    createEntities(entityNames: string[]): Promise<string[]> {
+        return this.throttler(this.createEntity, entityNames) as Promise<string[]>;
+    }
+
+    deleteEntity(entityId: string): Promise<void> {
+        let opts: request.Options = {
+            method: 'DELETE',
+            uri: `${this.applicationId}/entities/${entityId}`
+        };
+        return this.retryRequest(opts, 200)
+            .then(() => Promise.resolve());
+    }
+
+    deleteEntities(entityIds: string[]): Promise<void> {
+        return this.throttler(this.deleteEntity, entityIds)
+            .then(() => Promise.resolve());
+    }
+
+    getPhraseLists(): Promise<LuisApi.PhraseList[]> {
+        let opts: request.Options = {
+            method: 'GET',
+            uri: `${this.applicationId}/phraselists`
+        };
+        return this.retryRequest(opts, 200)
+            .then((res: RequestResponse) => res.body.map((phraseList: any) => {
+                return {
+                    id: phraseList.Id.toString(),
+                    name: phraseList.Name,
+                    mode: phraseList.Mode.toLowerCase() === 'non-exchangeable' ?
+                        LuisApi.PhraseListModes.NonExchangeable : LuisApi.PhraseListModes.Exchangeable,
+                    isActive: phraseList.IsActive,
+                    editable: phraseList.Editable,
+                    phrases: phraseList.Phrases
+                } as LuisApi.PhraseList;
+            }));
+    }
+
+    createPhraseList(phraseList: LuisApi.PhraseList): Promise<string> {
+        let opts: request.Options = {
+            method: 'POST',
+            uri: `${this.applicationId}/phraselists`,
+            body: {
+                    Name: phraseList.name,
+                    Mode: phraseList.mode === LuisApi.PhraseListModes.NonExchangeable ?
+                        'Non-exchangeable' : 'Exchangeable',
+                    IsActive: phraseList.isActive !== undefined ? phraseList.isActive : true,
+                    Editable: phraseList.editable !== undefined ? phraseList.editable : true,
+                    Phrases: phraseList.phrases
+                }
+        };
+        return this.retryRequest(opts, 201)
+            // phraseListId
+            .then((res: RequestResponse) => res.body);
+    }
+
+    createPhraseLists(phraseLists: LuisApi.PhraseList[]): Promise<string[]> {
+        return this.throttler(this.createPhraseList, phraseLists) as Promise<string[]>;
+    }
+
+    deletePhraseList(phraseListId: string): Promise<void> {
+        let opts: request.Options = {
+            method: 'DELETE',
+            uri: `${this.applicationId}/phraselists/${phraseListId}`
+        };
+        return this.retryRequest(opts, 200)
+            .then(() => Promise.resolve());
+    }
+
+    deletePhraseLists(phraseListIds: string[]): Promise<void> {
+        return this.throttler(this.deletePhraseList, phraseListIds)
+            .then(() => Promise.resolve());
+    }
+
+    getExamples(skip: number, count: number): Promise<LuisApi.LabeledUtterance[]> {
+        let opts: request.Options = {
+            method: 'GET',
+            uri: `${this.applicationId}/examples`,
+            qs: { skip, count }
+        };
+        return this.retryRequest(opts, 200)
+            .then((res: RequestResponse) => res.body.map((example: any) => {
+                let utterance: LuisApi.LabeledUtterance = {
+                    id: example.exampleId,
+                    utteranceText: example.utteranceText,
+                    intent: example.IntentsResults.Name,
+                    entities: []
+                };
+                if (example.EntitiesResults && example.EntitiesResults.length) {
+                    utterance.entities = example.EntitiesResults.map((entity: any) => {
+                        return {
+                            name: entity.name,
+                            startToken: entity.indeces.startToken,
+                            endToken: entity.indeces.endToken,
+                            word: entity.word,
+                            isBuiltInExtractor: entity.isBuiltInExtractor
+                        };
+                    });
+                }
+                return utterance;
+            }));
+    }
+
+    /**
+     * Get all the examples by concurrently getting bunches of examples in order to speed up the operation
+     */
+    getAllExamples(): Promise<LuisApi.LabeledUtterance[]> {
+        let examplesBunches: LuisApi.LabeledUtterance[][] = [];
+
+        // Recursively get examples in bunches of MAX_PARALLEL_EXAMPLES_REQUESTS parallel requests
+        const getExamplesBunch = (skip: number = 0): Promise<void> => {
+            // List of skip argument value to be used in getExamples call
+            let skipList = Array.from(Array(MAX_PARALLEL_EXAMPLES_REQUESTS))
+                .map((e, i) => skip + i * MAX_EXAMPLES_COUNT);
+            let promises = skipList.map(skip => this.promiseThrottle.add(this.getExamples.bind(this, skip, MAX_EXAMPLES_COUNT)));
+            return Promise.all(promises)
+                .then((examplesBunch: LuisApi.LabeledUtterance[][]) => {
+                    let lastBunchFound = examplesBunch.some(bunch => {
+                        if (bunch.length) {
+                            examplesBunches.push(bunch);
+                        }
+                        return bunch.length < MAX_EXAMPLES_COUNT;  // Is it the last bunch?
+                    });
+                    if (!lastBunchFound) {
+                        // Recursively get the next bunch of examples
+                        return getExamplesBunch(skip + MAX_PARALLEL_EXAMPLES_REQUESTS * MAX_EXAMPLES_COUNT);
+                    }
+                });
         };
 
-        return this._baseRequest.defaults({body: publishBody})
-            .post(`${appId}/publish`)
-            .then((response: any) => {
+        return getExamplesBunch().then(() => _.flatten(examplesBunches));
+    }
+
+    createExamples(examples: LuisApi.Example[]): Promise<string[]> {
+        // Create examples up to MAX_EXAMPLES_UPLOAD
+        let createLimitedExamples = (examples: LuisApi.Example[]) => {
+            let opts: request.Options = {
+                method: 'POST',
+                uri: `${this.applicationId}/examples`,
+                body: examples
+            };
+            return this.retryRequest(opts, 201)
+                .then((res: RequestResponse) => res.body)
+                .then((body: any[]) => {
+                    let errors = body.filter(r => r.hasError);
+                    if (errors.length) {
+                        return Promise.reject(new Error('LuisApiClient: The following examples have errors:\n'
+                            + JSON.stringify(errors, null, 2)));
+                    }
+                    return body.map(r => r.value.ExampleId.toString());
+                });
+        };
+
+        // LUIS API supports up to 100 examples at the same time
+        let examplesBunches = _.chunk(examples, MAX_EXAMPLES_UPLOAD);
+        return this.throttler(createLimitedExamples, examplesBunches)
+            .then(_.flatten);
+    }
+
+    deleteExample(exampleId: string): Promise<void> {
+        let opts: request.Options = {
+            method: 'DELETE',
+            uri: `${this.applicationId}/examples/${exampleId}`
+        };
+        return this.retryRequest(opts, 200)
+            .then(() => Promise.resolve());
+    }
+
+    deleteExamples(exampleIds: string[]): Promise<void> {
+        return this.throttler(this.deleteExample, exampleIds)
+            .then(() => Promise.resolve());
+    }
+
+    private convertTrainingStatus(apiTrainingStatus: any[]): LuisApi.TrainingStatus {
+        return apiTrainingStatus.map((modelStatus: any) => {
+            let modelTrainingStatus: LuisApi.ModelTrainingStatus = {
+                modelId: modelStatus.ModelId,
+                status: modelStatus.Details.StatusId as LuisApi.TrainingStatuses,
+                exampleCount: modelStatus.Details.ExampleCount
+            };
+            if (modelStatus.Details.FailureReason !== 'Unknown') {
+                console.error('Training Error: please, send the following trace to the developer:');
+                console.error(modelStatus);
+                modelTrainingStatus.failureReason = modelStatus.Details.FailureReason;
+            }
+            return modelTrainingStatus;
+        });
+    }
+
+    startTraining(): Promise<LuisApi.TrainingStatus> {
+        let opts: request.Options = {
+            method: 'POST',
+            uri: `${this.applicationId}/train`
+        };
+        return this.retryRequest(opts, 202)
+            .then((res: RequestResponse) => res.body)
+            .then(this.convertTrainingStatus);
+    }
+
+    getTrainingStatus(): Promise<LuisApi.TrainingStatus> {
+        let opts: request.Options = {
+            method: 'GET',
+            uri: `${this.applicationId}/train`
+        };
+        return this.retryRequest(opts, 200)
+            .then((res: RequestResponse) => res.body)
+            .then(this.convertTrainingStatus);
+    }
+
+    publish(): Promise<LuisApi.PublishResult> {
+        let opts: request.Options = {
+            method: 'POST',
+            uri: `${this.applicationId}/publish`,
+            // We don't really know what this body is for but it must be included for the API to work
+            body: {
+                BotFramework: { Enabled: false, AppId: '', SubscriptionKey: '', Endpoint: '' },
+                Slack: { Enabled: false, ClientId: '', ClientSecret: '', RedirectUri: '' },
+                PrivacyStatement: '',
+                TermsOfUse: ''
+            }
+        };
+        return this.retryRequest(opts, 201)
+            .then((res: RequestResponse) => res.body)
+            .then(body => {
                 return {
-                    url: response.URL,
-                    previewUrl: response.PreviewURL,
-                    subscriptionKey: response.SubscriptionKey,
-                    publishDate: response.PublishDate
-                };
-            })
-            .catch((err: any) => {
-                throw err;
+                    url: body.URL,
+                    subscriptionKey: body.SubscriptionKey,
+                    publishDate: new Date(body.PublishDate)
+                } as LuisApi.PublishResult;
             });
     }
 
-    getStartChar(text: string, startPos: number): number {
-        let tokens = text.split(' ');
-        return text.indexOf(tokens[startPos]);
+    export(): Promise<any> {
+        let opts: request.Options = {
+            method: 'GET',
+            uri: `${this.applicationId}/export`
+        };
+        return this.retryRequest(opts, 200)
+            .then((res: RequestResponse) => res.body);
     }
 
-    getEndChar(text: string, endPos: number): number {
-        let tokens = text.split(' ');
-        return text.indexOf(tokens[endPos]) + tokens[endPos].length - 1;
-    }
 }

@@ -1,6 +1,6 @@
 /**
 * @license
-* Copyright 2016 Telefónica I+D
+* Copyright 2017 Telefónica I+D
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -15,85 +15,156 @@
 * limitations under the License.
 */
 
-import { LuisApp } from './luis-app';
-
 import * as fs from 'fs';
-import * as path from 'path';
 import * as commander from 'commander';
-import * as logger from 'logops';
+import { LuisTrainer, LuisTrainerConfig } from './luis-trainer';
+import { Luis as LuisModel } from '@telefonica/language-model-converter/lib/luis-model';
 
-interface InterfaceCLI extends commander.ICommand {
-    export?: string;
-    import?: string;
-    update?: string;
-    appid?: string;
-    subid?: string;
-    appname?: string;
-    verbose?: boolean;
+
+const DEFAULT_LUIS_ENDPOINT = 'https://westus.api.cognitive.microsoft.com';
+
+enum Commands { Update, Export };
+let command: Commands;
+
+let runner: Promise<void> = null;
+
+interface ProgramOptions extends commander.ICommand {
+    parent?: ProgramOptions;  // When using commands, `parent` holds options from the main program
+    endpoint?: string;
+    applicationId?: string;
+    filename?: string;
+    subscriptionKey?: string;
 }
 
-const cli: InterfaceCLI = commander
-    .option('-e, --export [filename]', 'Export application to JSON file. You need to specify an appid.')
-    .option('-i, --import [filename]', 'Import application from JSON file. You will get a new appid.')
-    .option('-u, --update [filename]', 'Update application from JSON file. You need to specify an appid.')
-    .option('-a, --appid [application_id]', 'Microsoft LUIS application id. Optional depending on what you want to do.')
-    .option('-s, --subid [subscription_id]', 'Microsoft LUIS subscription id. REQUIRED.')
-    .option('-n, --appname [subscription_name]', 'Microsoft LUIS subscription name. Only needed for importing.')
-    .option('-v, --verbose', 'Set verbose mode.')
-    .parse(process.argv);
+const program: ProgramOptions = commander
+    .usage('command [options]')
+    .option('-e, --endpoint <endpoint>', `LUIS endpoint (also got from the LUIS_ENDPOINT env var) [${DEFAULT_LUIS_ENDPOINT}]`,
+        DEFAULT_LUIS_ENDPOINT)
+    .option('-s, --subscription-key <subscription-key>', 'LUIS subscription key (also got from the LUIS_SUBSCRIPTION_KEY env var)');
 
-if (cli.verbose) {
-    logger.setLevel('DEBUG');
+program
+    .command('update')
+    .description('Update a LUIS application with the model from <filename>')
+    .option('-a, --application-id <application-id>', 'LUIS application id (also got from the LUIS_APPLICATION_ID env var)')
+    .option('-f, --filename <filename>', 'JSON file containing the model to upload to the LUIS application')
+    .action(options => selectRunner(Commands.Update, options))
+    .on('--help', function() {
+        console.log('  Example:');
+        console.log();
+        console.log('    Update an application using the model from the file \'model.json\':');
+        console.log('      $ luis-cli update -a XXX -f model.json -s YYY');
+    });
+
+program
+    .command('export')
+    .description('Export a LUIS application to the given <filename>')
+    .option('-a, --application-id <application-id>', 'LUIS application id (also got from the LUIS_APPLICATION_ID env var)')
+    .option('-f, --filename <filename>', 'file where the LUIS application will be exported to')
+    .action(options => selectRunner(Commands.Export, options))
+    .on('--help', function() {
+        console.log('  Example:');
+        console.log();
+        console.log('    Export an application to the file \'model.json\':');
+        console.log('      $ luis-cli export -a XXX -f model.json -s YYY');
+    });
+
+program.parse(process.argv);
+
+if (!runner) {
+    // No command has been selected
+    printError('supported commands: update, export');
 }
 
-let luisApp: LuisApp = new LuisApp(cli.appid, cli.subid);
+runner.then(() => {
+    process.exit(0);
+});
 
-if (cli.export) {
-    luisApp.export()
-        .then((appObj: Object) => {
-            let dirname: string = path.normalize(path.dirname(cli.export));
 
-            if (!fs.statSync(dirname).isDirectory()) {
-                fs.mkdirSync(dirname);
+function selectRunner(command: Commands, options: ProgramOptions) {
+    // Get values from env vars if not provided via options
+    let endpoint = options.parent.endpoint || process.env.LUIS_ENDPOINT;
+    let subscriptionKey = options.parent.subscriptionKey || process.env.LUIS_SUBSCRIPTION_KEY;
+    let applicationId = options.applicationId || process.env.LUIS_APPLICATION_ID;
+    let filename = options.filename;
+
+    // console.log('COMMAND:', command);
+    // console.log('ENDPOINT:', endpoint);
+    // console.log('APPLICATION-ID:', applicationId);
+    // console.log('SUBSCRIPTION-KEY:', subscriptionKey);
+    // console.log('FILENAME:', filename);
+
+    // Check mandatory options
+    if (!subscriptionKey) {
+        printError('unknown LUIS subscription key. Provide one through the `-s, --subscription-key` option ' +
+            'or the `LUIS_SUBSCRIPTION_KEY` env var.');
+    }
+    if ((command === Commands.Update || command === Commands.Export) && !applicationId) {
+        printError('unknown LUIS application id. Provide one through the `-a, --application-id` option ' +
+            'or the `LUIS_APPLICATION_ID` env var.');
+    }
+
+    let luisTrainerConfig: LuisTrainerConfig = {
+        luisApiClientConfig: {
+            baseUrl: endpoint,
+            subscriptionKey: subscriptionKey,
+            applicationId: applicationId
+        }
+    };
+    let luisTrainer: LuisTrainer = new LuisTrainer(luisTrainerConfig);
+
+    switch (command) {
+        case Commands.Update:
+            if (!filename) {
+                printError('missing JSON file from which the model will be read. Provide one through the `-f, --filename` option.');
             }
+            runner = updateApp(luisTrainer, filename);
+            break;
 
-            let formattedAppObj = JSON.stringify(appObj, null, 2);
-            fs.writeFileSync(cli.export, formattedAppObj);
-            logger.debug('App exported to file %s', cli.export);
+        case Commands.Export:
+            if (!filename) {
+                printError('missing JSON file to which the application will be exported. Provide one through the `-f, --filename` option.');
+            }
+            runner = exportApp(luisTrainer, filename);
+            break;
+    }
+}
 
-            console.log(cli.appid);
+function updateApp(luisTrainer: LuisTrainer, filename: string): Promise<void> {
+    let model: LuisModel.Model;
+    try {
+        model = JSON.parse(fs.readFileSync(filename, 'utf8'));
+    } catch (err) {
+        if (err.code === 'ENOENT') {
+            printError(`the file ${filename} does not exist.`);
+        } else {
+            handleError(err);
+        }
+    }
+
+    return luisTrainer.update(model)
+        .then(() => {
+            console.log('Application updated');
         })
-        .catch((err) => {
-            logger.error(err);
-            process.exit(1);
-        });
-} else if (cli.import) {
-    let appData = JSON.parse(fs.readFileSync(cli.import, 'utf-8'));
+        .catch(handleError);
+}
 
-    luisApp.import(cli.appname, appData)
-        .then((appId: string) => {
-            logger.debug('App data has been imported under appId %s', appId);
+function exportApp(luisTrainer: LuisTrainer, filename: string): Promise<void> {
+    return luisTrainer.export()
+        .then(model => {
+            fs.writeFileSync(filename, JSON.stringify(model, null, 2));
+            console.log('Application exported');
+        })
+        .catch(handleError);
+}
 
-            // Write the appId to stdout to use luis-cli output in other tools
-            console.log(appId);
-        })
-        .catch((err) => {
-            logger.error(err);
-            process.exit(1);
-        });
-} else if (cli.update) {
-    let appData = JSON.parse(fs.readFileSync(cli.update, 'utf-8'));
-    logger.debug('Updating application');
-    luisApp.updateUtterances(appData)
-        .then(data => {
-            logger.debug(data, 'Application Updated');
-            console.log(cli.appid);
-        })
-        .catch(err => {
-            logger.error(err);
-            process.exit(1);
-        });
-} else {
-    console.log('Select --import or --export or --update operation');
+function printError(msg: string) {
+    console.error();
+    console.error(`  error: ${msg}`);
+    console.error();
+    process.exit(1);
+}
+
+function handleError(err: Error) {
+    console.error(`ERROR: ${err.message}`);
     process.exit(1);
 }
