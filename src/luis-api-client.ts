@@ -105,12 +105,13 @@ export namespace LuisApi {
     }
 }
 
+const LUIS_API_BASE_URL = 'https://westus.api.cognitive.microsoft.com';
 const RETRY_OPTS = {
     retries: 10,
     factor: 2,
     minTimeout: 1500
 };
-// Maximum number of parallel requests to the API (to minimize 429 rate errors)
+// Maximum number of parallel requests per second to send to the API (to minimize 429 rate errors)
 const REQUESTS_PER_SECOND = 4;
 // count parameter of the getExamples API (the API doesn't support more than 100)
 const MAX_EXAMPLES_COUNT = 100;
@@ -133,7 +134,7 @@ export class LuisApiClient {
 
     constructor(config: LuisApiClientConfig) {
         this.applicationId = config.applicationId;
-        let baseUrl = config.baseUrl || 'https://westus.api.cognitive.microsoft.com';
+        let baseUrl = config.baseUrl || LUIS_API_BASE_URL;
         this.req = request.defaults({
             baseUrl: `${baseUrl}/luis/v1.0/prog/apps`,
             headers: {
