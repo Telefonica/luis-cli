@@ -1,6 +1,6 @@
 {
   "name": "@telefonica/luis-cli",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "CLI for Microsoft LUIS API",
   "license": "Apache-2.0",
   "repository": "https://github.com/Telefonica/yot-bot",
