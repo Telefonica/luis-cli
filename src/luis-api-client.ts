@@ -88,7 +88,7 @@ export namespace LuisApi {
         entityLabels?: Entity[];
     }
 
-    export enum TrainingStatuses { UpToDate = 2, InProgress = 3 }
+    export enum TrainingStatuses { Success = 0, UpToDate = 2, InProgress = 3 }
 
     export interface ModelTrainingStatus {
         modelId: string;
@@ -207,7 +207,8 @@ export class LuisApiClient extends EventEmitter {
             uri: `${this.applicationId}/intents`
         };
         return this.retryRequest(opts, 200)
-            .then((res: RequestResponse) => res.body.map((intent: any) => {
+            .then((res: RequestResponse) => res.body)
+            .then((intents) => intents.map((intent: any) => {
                 return {
                     id: intent.id,
                     name: intent.name
@@ -259,7 +260,8 @@ export class LuisApiClient extends EventEmitter {
             uri: `${this.applicationId}/entities`
         };
         return this.retryRequest(opts, 200)
-            .then((res: RequestResponse) => res.body.map((entity: any) => {
+            .then((res: RequestResponse) => res.body)
+            .then((entities) => entities.map((entity: any) => {
                 return {
                     id: entity.id,
                     name: entity.name
@@ -310,7 +312,8 @@ export class LuisApiClient extends EventEmitter {
             uri: `${this.applicationId}/phraselists`
         };
         return this.retryRequest(opts, 200)
-            .then((res: RequestResponse) => res.body.map((phraseList: any) => {
+            .then((res: RequestResponse) => res.body)
+            .then((phraseLists) => phraseLists.map((phraseList: any) => {
                 return {
                     id: phraseList.Id.toString(),
                     name: phraseList.Name,
@@ -484,6 +487,12 @@ export class LuisApiClient extends EventEmitter {
                 status: modelStatus.Details.StatusId as LuisApi.TrainingStatuses,
                 exampleCount: modelStatus.Details.ExampleCount
             };
+            // The following code is intended to catch the missing status with code 1 that will probably
+            // be "Failure" but we are not sure because the lack of API documentation
+            if (modelStatus.Details.StatusId === 1) {
+                console.error('Training Error: please, send the following trace to the developer:');
+                console.error(modelStatus);
+            }
             if (modelStatus.Details.FailureReason !== 'Unknown') {
                 console.error('Training Error: please, send the following trace to the developer:');
                 console.error(modelStatus);

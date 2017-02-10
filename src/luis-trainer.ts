@@ -135,24 +135,32 @@ export class LuisTrainer extends EventEmitter {
             .catch(err => this.wrapError(err, 'Error trying to update entities'));
     }
 
-    private updatePhraseLists(newPhraseLists: LuisModel.ModelFeature[]): Promise<void> {
+    private updatePhraseLists(newModelPhraseLists: LuisModel.ModelFeature[]): Promise<void> {
+        /**
+         * Compare phraseLists ignoring non-meaningful properties
+         */
+        const comparePhraseLists = (a: LuisApi.PhraseList, b: LuisApi.PhraseList) => {
+            return a.name === b.name &&
+                a.mode === b.mode &&
+                a.isActive === b.isActive &&
+                a.phrases === b.phrases;
+        };
+
         return this.luisApiClient.getPhraseLists()
             .then(oldPhraseLists => {
-                let phraseListIdsToBeDeleted = _.differenceWith(oldPhraseLists, newPhraseLists,
-                    (a: LuisApi.PhraseList, b: LuisModel.ModelFeature) => a.name === b.name
-                ).map(phraseList => phraseList.id);
-                let phraseListToBeCreated = _.differenceWith(newPhraseLists, oldPhraseLists,
-                    (a: LuisModel.ModelFeature, b: LuisApi.PhraseList) => a.name === b.name
-                )
                 // Convert data from the model to the format used by the API
-                .map((phraseList: LuisModel.ModelFeature) => {
+                let newPhraseLists = newModelPhraseLists.map((phraseList: LuisModel.ModelFeature) => {
                     return {
                         name: phraseList.name,
                         mode: phraseList.mode === false ?
                             LuisApi.PhraseListModes.NonExchangeable : LuisApi.PhraseListModes.Exchangeable,
+                        isActive: phraseList.activated,
                         phrases: phraseList.words
                     } as LuisApi.PhraseList;
                 });
+                let phraseListIdsToBeDeleted = _.differenceWith(oldPhraseLists, newPhraseLists, comparePhraseLists)
+                    .map(phraseList => phraseList.id);
+                let phraseListToBeCreated = _.differenceWith(newPhraseLists, oldPhraseLists, comparePhraseLists);
                 let stats: UpdateEvent = {
                     create: phraseListToBeCreated.length,
                     delete: phraseListIdsToBeDeleted.length
@@ -174,35 +182,31 @@ export class LuisTrainer extends EventEmitter {
         return this.luisApiClient.getAllExamples()
             .then(oldExamples => {
                 this.emit('endGetAllExamples', oldExamples.length);
+                // Examples to be deleted will be those whose texts are no longer needed.
+                // It could happen that some examples share texts but have different intent or entities
+                // but those will be overwritten when uploading the so called `examplesToBeCreated`.
                 let exampleIdsToBeDeleted = _.differenceWith(oldExamples, newExamples,
                     (a: LuisApi.LabeledUtterance, b: LuisModel.Utterance) => a.utteranceText === b.text
-                ).map(example => example.id);
-                /* I will come back to this later in order to optimize the number examples to create
-                   discarding those ones that have not changed (usually most of the examples won't change)
-                let examplesToBeCreated = _.differenceWith(newExamples, oldExamples,
-                    (a: LuisModel.Utterance, b: LuisApiClient.LabeledUtterance) => {
-                        // Convert `a` to a LuisApiClient.LabeledUtterance to make easier the comparison
-                        let c: LuisApiClient.LabeledUtterance = {
-                            id: null,
-                            utteranceText: a.text,
-                            intent: a.intent,
-                            entities: a.entities.map(ae => {
-                                let recognizedEntity = this.recognizeEntity(a.text, ae.startPos, ae.endPos);
-                                return {
-                                    name: ae.entity,
-                                    startToken: recognizedEntity.startChar,
-                                    endToken: recognizedEntity.endChar,
-                                    word: recognizedEntity.word,
-                                    isBuiltInExtractor: false
-                                } as LuisApiClient.LabeledEntity;
-                            }).sort((a, b) => b.startToken - a.startToken || b.endToken - a.endToken)
-                        };
+                ).map((example: LuisApi.LabeledUtterance) => example.id);
 
+                // Examples to be uploaded (overwriting those that already exist with the same text although
+                // they have different intents or entities) will be those that don't already exist or
+                // differs from existing one by the intent or entities.
+                let examplesToBeCreated = _.differenceWith(newExamples, oldExamples,
+                    (a: LuisModel.Utterance, b: LuisApi.LabeledUtterance) => {
+                        let eq = a.text === b.utteranceText &&
+                            a.intent === b.intent &&
+                            a.entities.length === b.entities.length &&
+                            // Compare array of entities w/o assuming the same order
+                            a.entities.length === _.intersectionWith(a.entities, b.entities,
+                                (ae: LuisModel.EntityPosition, be: LuisApi.LabeledEntity) =>
+                                    ae.entity === be.name && ae.startPos === be.startToken && ae.endPos === be.endToken
+                            ).length;
+                        return eq;
                     }
-                );
-                */
+                )
                 // Convert data from the model to the format used by the API
-                let examplesToBeCreated = newExamples.map(example => {
+                .map((example: LuisModel.Utterance) => {
                     return {
                         exampleText: example.text,
                         selectedIntentName: example.intent,
@@ -216,6 +220,19 @@ export class LuisTrainer extends EventEmitter {
                         })
                     } as LuisApi.Example;
                 });
+
+                // Debug stuff for hunting examples that are recurrently created even when theoretically they already exist
+                // Won't be removed until we are completely sure that everything is going well
+                // require('fs').writeFileSync('old.txt', oldExamples.map(example => example.utteranceText).sort().join('\n'), 'utf-8');
+                // require('fs').writeFileSync('create.txt', examplesToBeCreated.map(example => example.exampleText).sort().join('\n'), 'utf-8');
+                // let SENTENCE = '';
+                // console.log('='.repeat(50));
+                // console.log(newExamples.filter(example => example.text === SENTENCE));
+                // console.log('='.repeat(50));
+                // console.log(oldExamples.filter(example => example.utteranceText === SENTENCE));
+                // console.log('='.repeat(50));
+                // console.log(examplesToBeCreated.filter(example => example.exampleText === SENTENCE));
+                // console.log('='.repeat(50));
 
                 let stats: UpdateEvent = {
                     create: examplesToBeCreated.length,
@@ -246,15 +263,15 @@ export class LuisTrainer extends EventEmitter {
             return delay(TRAINING_STATUS_POLLING_INTERVAL)
                 .then(() => this.luisApiClient.getTrainingStatus())
                 .then((trainingStatus: LuisApi.TrainingStatus) => {
+                    // Debug stuff
+                    // console.log(trainingStatus.map(ts => ts.status).join(''));
                     let finishedModels = trainingStatus.filter(modelStatus =>
-                        // The training has finished when the status is "Up to date" or when there is a failure.
-                        // Probably there is a status that signal a failure but due to the lack of documentation
-                        // we'll look for the existence of a failure reason
+                        // The training has finished when the status is "Success" or "Up to date"
+                        // or when there is a failure. Probably there is a status that signal a failure
+                        // but due to the lack of documentation we'll look for the existence of a failure reason
+                        modelStatus.status === LuisApi.TrainingStatuses.Success ||
                         modelStatus.status === LuisApi.TrainingStatuses.UpToDate || !!modelStatus.failureReason);
                     this.emit('trainingProgress', finishedModels.length, trainingStatus.length);
-                    // let finished = trainingStatus.every(modelStatus =>
-                    //     modelStatus.status === LuisApi.TrainingStatuses.UpToDate || !!modelStatus.failureReason
-                    // );
                     if (finishedModels.length < trainingStatus.length) {
                         return waitForTraining();
                     }
