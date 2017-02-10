@@ -144,24 +144,24 @@ function updateApp(luisTrainer: LuisTrainer, applicationId: string, filename: st
     console.log(`Updating the application ${applicationId} with the model from "${filename}"...`);
     console.log();
     luisTrainer.on('startUpdateIntents', (stats: UpdateEvent) => {
-        console.log(`Updating intents: creating ${stats.create} new intents ` +
-            `and deleting ${stats.delete} intents no longer needed...`);
+        console.log(`Updating intents: deleting ${stats.delete} intents no longer needed ` +
+            `and creating ${stats.create} new intents...`);
     });
     luisTrainer.on('endUpdateIntents', () => {
         console.log('Intents successfully updated.');
         console.log();
     });
     luisTrainer.on('startUpdateEntities', (stats: UpdateEvent) => {
-        console.log(`Updating entities: creating ${stats.create} new entities ` +
-            `and deleting ${stats.delete} entities no longer needed...`);
+        console.log(`Updating entities: deleting ${stats.delete} entities no longer needed ` +
+            `and creating ${stats.create} new entities...`);
     });
     luisTrainer.on('endUpdateEntities', () => {
         console.log('Entities successfully updated.');
         console.log();
     });
     luisTrainer.on('startUpdatePhraseLists', (stats: UpdateEvent) => {
-        console.log(`Updating phrase lists: creating ${stats.create} new phrase lists ` +
-            `and deleting ${stats.delete} phrase lists no longer needed...`);
+        console.log(`Updating phrase lists: deleting ${stats.delete} phrase lists no longer needed ` +
+            `and creating ${stats.create} new phrase lists...`);
     });
     luisTrainer.on('endUpdatePhraseLists', () => {
         console.log('Phrase lists successfully updated.');
@@ -175,8 +175,8 @@ function updateApp(luisTrainer: LuisTrainer, applicationId: string, filename: st
         console.log(`\nGot ${numberOfExamples} examples.`);
     });
     luisTrainer.on('startUpdateExamples', (stats: UpdateEvent) => {
-        console.log(`Updating examples: creating ${stats.create} new examples ` +
-            `and deleting ${stats.delete} examples no longer needed...`);
+        console.log(`Updating examples: deleting ${stats.delete} examples no longer needed ` +
+            `and creating ${stats.create} new examples...`);
 
         let deleted = 0;
         luisTrainer.on('deleteExample', () => {
