@@ -27,6 +27,21 @@ export interface UpdateEvent {
     delete: number;
 }
 
+export interface PredictionError {
+    text: string;
+    tokenizedText?: string[];
+    intent: string;
+    predictedIntent?: string;
+    entities?: LuisApi.LabeledEntity[];
+    predictedEntities?: LuisApi.LabeledEntity[];
+}
+
+interface Token {
+    token: string;
+    startChar: number;
+    endChar: number;
+}
+
 interface RecognizedEntity {
     word: string;
     startChar: number;
@@ -65,7 +80,57 @@ export class LuisTrainer extends EventEmitter {
             .then(() => Promise.resolve());
     }
 
-    private wrapError(error: Error, message: string) {
+    checkPredictions(): Promise<PredictionError[]> {
+        function matchPredictedIntent(example: LuisApi.LabeledUtterance): boolean {
+            return example.intent === example.predictedIntents.sort((a: any, b: any) => b.score - a.score)[0].name;
+        }
+
+        function matchPredictedEntities(example: LuisApi.LabeledUtterance): boolean {
+            // Predicted entities must have at least the labeled entities.
+            // If there are some extra predicted entities, it is not an issue.
+            return _.differenceWith(example.entities, example.predictedEntities, _.isEqual).length === 0;
+        }
+
+        function matchTokenizedText(example: LuisApi.LabeledUtterance): boolean {
+            return _.isEqual(example.tokenizedText, LuisTrainer.tokenizeSentence(example.utteranceText));
+        }
+
+        this.emit('startGetAllExamples');
+        this.luisApiClient.on('getExamples', (first: number, last: number) =>
+            this.emit('getExamples', first, last));
+        return this.luisApiClient.getAllExamples()
+            .then(examples => {
+                this.emit('endGetAllExamples', examples.length);
+                return examples
+                    // Filter by examples whose labeled intent or entities don't match the predicted ones.
+                    // It also checks the tokenization to ensure our algorithm is working as expected.
+                    .map(example => {
+                        let error: PredictionError = {
+                            text: example.utteranceText,
+                            intent: example.intent
+                        };
+                        if (!matchPredictedIntent(example)) {
+                            error.predictedIntent = example.predictedIntents[0].name;
+                        }
+                        if (!matchPredictedEntities(example)) {
+                            error.entities = example.entities;
+                            error.predictedEntities = example.predictedEntities;
+                        }
+                        if (!matchTokenizedText(example)) {
+                            error.tokenizedText = example.tokenizedText;
+                        }
+                        if (error.predictedIntent || error.predictedEntities || error.tokenizedText) {
+                            return error;
+                        } else {
+                            return null;
+                        }
+                    })
+                    .filter(example => example !== null);
+            });
+
+    }
+
+    private static wrapError(error: Error, message: string) {
         if (error.name === 'OwnError') {
             return Promise.reject(error);
         }
@@ -86,7 +151,7 @@ export class LuisTrainer extends EventEmitter {
                     throw err;
                 }
             })
-            .catch(err => this.wrapError(err, 'Error trying to check the culture'));
+            .catch(err => LuisTrainer.wrapError(err, 'Error trying to check the culture'));
     }
 
     private updateIntents(newIntents: string[]): Promise<void> {
@@ -109,7 +174,7 @@ export class LuisTrainer extends EventEmitter {
                         this.emit('endUpdateIntents', stats);
                     });
             })
-            .catch(err => this.wrapError(err, 'Error trying to update intents'));
+            .catch(err => LuisTrainer.wrapError(err, 'Error trying to update intents'));
     }
 
     private updateEntities(newEntities: string[]): Promise<void> {
@@ -132,7 +197,7 @@ export class LuisTrainer extends EventEmitter {
                         this.emit('endUpdateEntities', stats);
                     });
             })
-            .catch(err => this.wrapError(err, 'Error trying to update entities'));
+            .catch(err => LuisTrainer.wrapError(err, 'Error trying to update entities'));
     }
 
     private updatePhraseLists(newModelPhraseLists: LuisModel.ModelFeature[]): Promise<void> {
@@ -172,7 +237,7 @@ export class LuisTrainer extends EventEmitter {
                         this.emit('endUpdatePhraseLists', stats);
                     });
             })
-            .catch(err => this.wrapError(err, 'Error trying to update phrase lists'));
+            .catch(err => LuisTrainer.wrapError(err, 'Error trying to update phrase lists'));
     }
 
     private updateExamples(newExamples: LuisModel.Utterance[]): Promise<void> {
@@ -211,7 +276,7 @@ export class LuisTrainer extends EventEmitter {
                         exampleText: example.text,
                         selectedIntentName: example.intent,
                         entityLabels: example.entities.map(entity => {
-                            let recognizedEntity = this.recognizeEntity(example.text, entity.startPos, entity.endPos);
+                            let recognizedEntity = LuisTrainer.recognizeEntity(example.text, entity.startPos, entity.endPos);
                             return {
                                 entityType: entity.entity,
                                 startToken: recognizedEntity.startChar,
@@ -249,7 +314,7 @@ export class LuisTrainer extends EventEmitter {
                         this.emit('endUpdateExamples', stats);
                     });
             })
-            .catch(err => this.wrapError(err, 'Error trying to update examples'));
+            .catch(err => LuisTrainer.wrapError(err, 'Error trying to update examples'));
     }
 
     private train(): Promise<void> {
@@ -295,7 +360,7 @@ export class LuisTrainer extends EventEmitter {
         return this.luisApiClient.startTraining()
             .then(() => waitForTraining())
             // TODO: Catch the error when there already is a training ongoing to wait for it
-            .catch(err => this.wrapError(err, 'Error trying to train models'));
+            .catch(err => LuisTrainer.wrapError(err, 'Error trying to train models'));
     }
 
     private publish(): Promise<void> {
@@ -304,17 +369,17 @@ export class LuisTrainer extends EventEmitter {
             .then(publishResult => {
                 this.emit('endPublish');
             })
-            .catch(err => this.wrapError(err, 'Error trying to publish the app'));
+            .catch(err => LuisTrainer.wrapError(err, 'Error trying to publish the app'));
     }
 
     /**
-     * Find the entity text inside the sentence from its start and end positions.
+     * Tokenize a sentence following the LUIS rules returning the tokens and delimiters.
+     * TODO: Memoize this function.
      */
-    private recognizeEntity(sentence: string, startPos: number, endPos: number): RecognizedEntity {
+    private static splitSentenceByTokens(sentence: string): Token[] {
         if (!sentence || sentence.trim().length === 0) {
-            return null;
+            return [];
         }
-        let originalSentence = sentence;
         sentence = sentence.replace(/[\s\uFEFF\xA0]+$/g, '');  // Right trim
 
         // The following is a RegExp that contains the UTF-8 characters (http://www.utf8-chartable.de/unicode-utf8-table.pl)
@@ -335,11 +400,6 @@ export class LuisTrainer extends EventEmitter {
         // A non-word is any character not in WORD_CHARS and not a space
         const NON_WORD = new RegExp(`^[^\s${WORD_CHARS}]`);
 
-        interface Token {
-            token: string;
-            startChar: number;
-            endChar: number;
-        }
         let tokens: Token[] = [];
 
         // Walk through the sentence consuming chunks that matches WORD or NON_WORD
@@ -373,17 +433,33 @@ export class LuisTrainer extends EventEmitter {
             sentence = sentence.slice(token.length);
         }
 
+        return tokens;
+    }
+
+    /**
+     * Tokenize a sentence following the LUIS rules and return an array of strings
+     */
+    private static tokenizeSentence(sentence: string): string[] {
+        return LuisTrainer.splitSentenceByTokens(sentence).map(token => token.token);
+    }
+
+    /**
+     * Find the entity text inside the sentence from its start and end positions.
+     */
+    private static recognizeEntity(sentence: string, startPos: number, endPos: number): RecognizedEntity {
+        let tokens = LuisTrainer.splitSentenceByTokens(sentence);
+
         if (startPos < 0 || startPos >= tokens.length || endPos < 0 || endPos >= tokens.length) {
             throw new Error('Entity positions are out of range');
         }
         let startChar = tokens[startPos].startChar;
         let endChar = tokens[endPos].endChar;
-        let word = originalSentence.slice(startChar, endChar + 1);
+        let word = sentence.slice(startChar, endChar + 1);
         return {
             word,
             startChar,
             endChar
-        };
+        } as RecognizedEntity;
     }
 
 }

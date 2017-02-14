@@ -23,10 +23,10 @@ import { Luis as LuisModel } from '@telefonica/language-model-converter/lib/luis
 
 const DEFAULT_LUIS_ENDPOINT = 'https://westus.api.cognitive.microsoft.com';
 
-enum Commands { Update, Export };
+enum Commands { Update, Export, CheckPredictions };
 let command: Commands;
 
-let runner: Promise<void> = null;
+let runner: Promise<number> = null;
 
 interface ProgramOptions extends commander.ICommand {
     parent?: ProgramOptions;  // When using commands, `parent` holds options from the main program
@@ -51,7 +51,7 @@ program
     .on('--help', function() {
         console.log('  Example:');
         console.log();
-        console.log('    Update an application using the model from the file \'model.json\':');
+        console.log(`    Update an application using the model from the file 'model.json':`);
         console.log('      $ luis-cli update -a XXX -f model.json -s YYY');
     });
 
@@ -64,19 +64,32 @@ program
     .on('--help', function() {
         console.log('  Example:');
         console.log();
-        console.log('    Export an application to the file \'model.json\':');
+        console.log(`    Export an application to the file 'model.json':`);
         console.log('      $ luis-cli export -a XXX -f model.json -s YYY');
+    });
+
+program
+    .command('check')
+    .description(`Check whether each example's intent and entities match the predicted ones and export the differences to <filename>`)
+    .option('-a, --application-id <application-id>', 'LUIS application id (also got from the LUIS_APPLICATION_ID env var)')
+    .option('-f, --filename <filename>', `JSON file containing the examples incorrectly predicted`)
+    .action(options => selectRunner(Commands.CheckPredictions, options))
+    .on('--help', function() {
+        console.log('  Example:');
+        console.log();
+        console.log(`    Check whether an application correctly predict intents and entities and save differences to 'errors.json':`);
+        console.log('      $ luis-cli check -a XXX -f errors.json -s YYY');
     });
 
 program.parse(process.argv);
 
 if (!runner) {
     // No command has been selected
-    printError('supported commands: update, export');
+    printError('supported commands: update, export, check');
 }
 
-runner.then(() => {
-    process.exit(0);
+runner.then((exitCode: number) => {
+    process.exit(exitCode || 0);
 });
 
 
@@ -87,18 +100,13 @@ function selectRunner(command: Commands, options: ProgramOptions) {
     let applicationId = options.applicationId || process.env.LUIS_APPLICATION_ID;
     let filename = options.filename;
 
-    // console.log('COMMAND:', command);
-    // console.log('ENDPOINT:', endpoint);
-    // console.log('APPLICATION-ID:', applicationId);
-    // console.log('SUBSCRIPTION-KEY:', subscriptionKey);
-    // console.log('FILENAME:', filename);
-
     // Check mandatory options
     if (!subscriptionKey) {
         printError('unknown LUIS subscription key. Provide one through the `-s, --subscription-key` option ' +
             'or the `LUIS_SUBSCRIPTION_KEY` env var.');
     }
-    if ((command === Commands.Update || command === Commands.Export) && !applicationId) {
+    if ((command === Commands.Update || command === Commands.Export || command === Commands.CheckPredictions)
+        && !applicationId) {
         printError('unknown LUIS application id. Provide one through the `-a, --application-id` option ' +
             'or the `LUIS_APPLICATION_ID` env var.');
     }
@@ -126,10 +134,17 @@ function selectRunner(command: Commands, options: ProgramOptions) {
             }
             runner = exportApp(luisTrainer, applicationId, filename);
             break;
+
+        case Commands.CheckPredictions:
+            if (!filename) {
+                printError('missing JSON file to which the differences will be saved. Provide one through the `-f, --filename` option.');
+            }
+            runner = checkPrediction(luisTrainer, applicationId, filename);
+            break;
     }
 }
 
-function updateApp(luisTrainer: LuisTrainer, applicationId: string, filename: string): Promise<void> {
+function updateApp(luisTrainer: LuisTrainer, applicationId: string, filename: string): Promise<number> {
     let model: LuisModel.Model;
     try {
         model = JSON.parse(fs.readFileSync(filename, 'utf8'));
@@ -223,16 +238,56 @@ function updateApp(luisTrainer: LuisTrainer, applicationId: string, filename: st
     return luisTrainer.update(model)
         .then(() => {
             console.log('The application has been successfully updated');
+            return 0;
         })
         .catch(handleError);
 }
 
-function exportApp(luisTrainer: LuisTrainer, applicationId: string, filename: string): Promise<void> {
+function exportApp(luisTrainer: LuisTrainer, applicationId: string, filename: string): Promise<number> {
     console.log(`Exporting the application ${applicationId} to "${filename}"...`);
     return luisTrainer.export()
         .then(model => {
             fs.writeFileSync(filename, JSON.stringify(model, null, 2));
             console.log(`The application has been exported to "${filename}"`);
+            return 0;
+        })
+        .catch(handleError);
+}
+
+function checkPrediction(luisTrainer: LuisTrainer, applicationId: string, filename: string): Promise<number> {
+    console.log(`Checking predictions for the application ${applicationId}...`);
+
+    luisTrainer.on('startGetAllExamples', () => {
+        process.stdout.write('Getting all the existing examples ');
+        luisTrainer.on('getExamples', (first: number, last: number) => process.stdout.write('.'));
+    });
+    luisTrainer.on('endGetAllExamples', (numberOfExamples: number) => {
+        console.log(`\nGot ${numberOfExamples} examples.`);
+    });
+
+    return luisTrainer.checkPredictions()
+        .then(errors => {
+            if (errors.length) {
+                let intentErrors = errors.filter(error => error.predictedIntent).length;
+                let entityErrors = errors.filter(error => error.predictedEntities).length;
+                let tokenizationErrors = errors.filter(error => error.tokenizedText).length;
+                console.log('\nThe following prediction errors have been found:');
+                if (intentErrors) {
+                    console.log(`  - ${intentErrors} examples whose predicted intent is wrong.`);
+                }
+                if (entityErrors) {
+                    console.log(`  - ${entityErrors} examples whose predicted entities are wrong.`);
+                }
+                if (tokenizationErrors) {
+                    console.log(`  - ${tokenizationErrors} examples have been incorrectly tokenized.`);
+                }
+                fs.writeFileSync(filename, JSON.stringify(errors, null, 2));
+                console.log(`\nAll the prediction errors have been saved in "${filename}"`);
+                return errors.length;
+            } else {
+                console.log('No prediction errors have been found!');
+                return 0;
+            }
         })
         .catch(handleError);
 }

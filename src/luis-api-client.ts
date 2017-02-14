@@ -72,8 +72,14 @@ export namespace LuisApi {
     export interface LabeledUtterance {
         id: string;
         utteranceText: string;
+        tokenizedText: string[];
         intent: string;
+        predictedIntents: [{
+            name: string;
+            score: number;
+        }];
         entities: LabeledEntity[];
+        predictedEntities: LabeledEntity[];
     }
 
     export interface Entity {
@@ -371,6 +377,18 @@ export class LuisApiClient extends EventEmitter {
     }
 
     getExamples(skip: number, count: number): Promise<LuisApi.LabeledUtterance[]> {
+        function mapEntities(entities: any[]): LuisApi.LabeledEntity[] {
+            return entities.map((entity: any) => {
+                return {
+                    name: entity.name,
+                    startToken: entity.indeces.startToken,
+                    endToken: entity.indeces.endToken,
+                    word: entity.word,
+                    isBuiltInExtractor: entity.isBuiltInExtractor
+                } as LuisApi.LabeledEntity;
+            });
+        }
+
         let opts: request.Options = {
             method: 'GET',
             uri: `${this.applicationId}/examples`,
@@ -386,24 +404,20 @@ export class LuisApiClient extends EventEmitter {
                 return examples;
             })
             .then(examples => examples.map((example: any) => {
-                let utterance: LuisApi.LabeledUtterance = {
+                return {
                     id: example.exampleId,
                     utteranceText: example.utteranceText,
+                    tokenizedText: example.tokenizedText,
                     intent: example.IntentsResults.Name,
-                    entities: []
-                };
-                if (example.EntitiesResults && example.EntitiesResults.length) {
-                    utterance.entities = example.EntitiesResults.map((entity: any) => {
+                    predictedIntents: example.PredictedIntentResults.map((intent: any) => {
                         return {
-                            name: entity.name,
-                            startToken: entity.indeces.startToken,
-                            endToken: entity.indeces.endToken,
-                            word: entity.word,
-                            isBuiltInExtractor: entity.isBuiltInExtractor
+                            name: intent.Name,
+                            score: intent.score
                         };
-                    });
-                }
-                return utterance;
+                    }),
+                    entities: mapEntities(example.EntitiesResults),
+                    predictedEntities: mapEntities(example.PredictedEntitiesResults)
+                } as LuisApi.LabeledUtterance;
             }));
     }
 
