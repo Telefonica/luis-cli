@@ -17,6 +17,8 @@
 
 import * as fs from 'fs';
 import * as commander from 'commander';
+import { sprintf } from 'sprintf-js';
+import * as colors from 'colors';
 import { LuisTrainer, LuisTrainerConfig, UpdateEvent } from './luis-trainer';
 import { Luis as LuisModel } from '@telefonica/language-model-converter/lib/luis-model';
 
@@ -266,24 +268,44 @@ function checkPrediction(luisTrainer: LuisTrainer, applicationId: string, filena
     });
 
     return luisTrainer.checkPredictions()
-        .then(errors => {
-            if (errors.length) {
-                let intentErrors = errors.filter(error => error.predictedIntent).length;
-                let entityErrors = errors.filter(error => error.predictedEntities).length;
-                let tokenizationErrors = errors.filter(error => error.tokenizedText).length;
+        .then(predictionResult => {
+            if (predictionResult.errors.length) {
+                let intentErrors = predictionResult.errors.filter(error => error.predictedIntent).length;
+                let entityErrors = predictionResult.errors.filter(error => error.predictedEntities).length;
+                let tokenizationErrors = predictionResult.errors.filter(error => error.tokenizedText).length;
                 console.log('\nThe following prediction errors have been found:');
                 if (intentErrors) {
-                    console.log(`  - ${intentErrors} examples whose predicted intent is wrong.`);
+                    console.log(`  - ${colors.bold(intentErrors.toString())} examples whose predicted intent is wrong.`);
                 }
                 if (entityErrors) {
-                    console.log(`  - ${entityErrors} examples whose predicted entities are wrong.`);
+                    console.log(`  - ${colors.bold(entityErrors.toString())} examples whose predicted entities are wrong.`);
                 }
                 if (tokenizationErrors) {
-                    console.log(`  - ${tokenizationErrors} examples have been incorrectly tokenized.`);
+                    console.log(`  - ${colors.bold(tokenizationErrors.toString())} examples have been incorrectly tokenized.`);
                 }
-                fs.writeFileSync(filename, JSON.stringify(errors, null, 2));
+                fs.writeFileSync(filename, JSON.stringify(predictionResult.errors, null, 2));
                 console.log(`\nAll the prediction errors have been saved in "${filename}"`);
-                return errors.length;
+
+                // Print stats
+                console.log('\nIntent prediction errors:');
+                let longestIntentLen = Array.from(predictionResult.stats.keys()).concat('TOTAL')
+                    .reduce((a, b) => a.length > b.length ? a : b).length;
+                let total = 0;
+                let totalErrors = 0;
+                console.log('  ' + '='.repeat(longestIntentLen + 20));
+                predictionResult.stats.forEach((stats, intent) => {
+                    total += stats.total;
+                    totalErrors += stats.errors;
+                    let color = stats.errors > 0 ? colors.red : colors.green;
+                    console.log(sprintf(`  %${longestIntentLen}s: ${color('%6.2f%% (%d/%d)')}`,
+                        intent, stats.errors / stats.total * 100, stats.errors, stats.total));
+                });
+                console.log('  ' + '='.repeat(longestIntentLen + 20));
+                let color = totalErrors > 0 ? colors.red : colors.green;
+                console.log(sprintf(colors.bold(`  %${longestIntentLen}s: ${color('%6.2f%% (%d/%d)')}`),
+                    'TOTAL', totalErrors / total * 100, totalErrors, total));
+
+                return predictionResult.errors.length;
             } else {
                 console.log('No prediction errors have been found!');
                 return 0;
