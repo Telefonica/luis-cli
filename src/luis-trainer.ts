@@ -27,6 +27,8 @@ export interface UpdateEvent {
     delete: number;
 }
 
+export type PredictionStats = Map<string, { total: number, errors: number }>;
+
 export interface PredictionError {
     text: string;
     tokenizedText?: string[];
@@ -34,6 +36,11 @@ export interface PredictionError {
     predictedIntent?: string;
     entities?: LuisApi.LabeledEntity[];
     predictedEntities?: LuisApi.LabeledEntity[];
+}
+
+export interface PredictionResult {
+    stats: PredictionStats;
+    errors: PredictionError[];
 }
 
 interface Token {
@@ -80,7 +87,7 @@ export class LuisTrainer extends EventEmitter {
             .then(() => Promise.resolve());
     }
 
-    checkPredictions(): Promise<PredictionError[]> {
+    checkPredictions(): Promise<PredictionResult> {
         function matchPredictedIntent(example: LuisApi.LabeledUtterance): boolean {
             return example.intent === example.predictedIntents.sort((a: any, b: any) => b.score - a.score)[0].name;
         }
@@ -101,7 +108,7 @@ export class LuisTrainer extends EventEmitter {
         return this.luisApiClient.getAllExamples()
             .then(examples => {
                 this.emit('endGetAllExamples', examples.length);
-                return examples
+                let errors = examples
                     // Filter by examples whose labeled intent or entities don't match the predicted ones.
                     // It also checks the tokenization to ensure our algorithm is working as expected.
                     .map(example => {
@@ -126,6 +133,22 @@ export class LuisTrainer extends EventEmitter {
                         }
                     })
                     .filter(example => example !== null);
+
+                // Calculate stats
+                let exampleCounter = _.countBy(examples, example => example.intent);
+                let intentErrorCounter = _.countBy(errors.filter(error => error.predictedIntent), error => error.intent);
+                let stats: PredictionStats = new Map();
+                _.forEach(exampleCounter, (counter, intent) => {
+                    stats.set(intent, {
+                        total: counter,
+                        errors: intentErrorCounter[intent] || 0
+                    });
+                });
+
+                return {
+                    stats,
+                    errors
+                } as PredictionResult;
             });
 
     }

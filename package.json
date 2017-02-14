@@ -9,7 +9,9 @@
     "luis-cli": "./bin/luis-cli"
   },
   "keywords": [
-    "LUIS", "cognitive services", "NLP"
+    "LUIS",
+    "cognitive services",
+    "NLP"
   ],
   "scripts": {
     "build": "npm run clean && npm run compile",
@@ -21,19 +23,23 @@
     "test": "npm run build && mocha -R spec 'lib/**/*.spec.js'"
   },
   "dependencies": {
+    "colors": "^1.1.2",
     "commander": "^2.9.0",
     "lodash": "^4.17.4",
     "promise-retry": "^1.1.1",
     "promise-throttle": "^0.3.1",
     "request": "^2.79.0",
-    "request-promise-native": "^1.0.3"
+    "request-promise-native": "^1.0.3",
+    "sprintf-js": "^1.0.3"
   },
   "devDependencies": {
     "@telefonica/language-model-converter": "^2.5.0",
+    "@types/colors": "^1.1.1",
     "@types/commander": "^2.3.31",
     "@types/lodash": "^4.14.52",
     "@types/node": "^6.0.40",
     "@types/request-promise-native": "^1.0.2",
+    "@types/sprintf-js": "0.0.27",
     "mocha": "^3.2.0",
     "nsp": "^2.6.2",
     "shx": "^0.2.2",
