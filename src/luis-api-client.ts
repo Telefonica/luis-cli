@@ -94,7 +94,7 @@ export namespace LuisApi {
         entityLabels?: Entity[];
     }
 
-    export enum TrainingStatuses { Success = 0, UpToDate = 2, InProgress = 3 }
+    export enum TrainingStatuses { Success = 0, Failed = 1, UpToDate = 2, InProgress = 3 }
 
     export interface ModelTrainingStatus {
         modelId: string;
@@ -501,15 +501,7 @@ export class LuisApiClient extends EventEmitter {
                 status: modelStatus.Details.StatusId as LuisApi.TrainingStatuses,
                 exampleCount: modelStatus.Details.ExampleCount
             };
-            // The following code is intended to catch the missing status with code 1 that will probably
-            // be "Failure" but we are not sure because the lack of API documentation
-            if (modelStatus.Details.StatusId === 1) {
-                console.error('Training Error: please, send the following trace to the developer:');
-                console.error(modelStatus);
-            }
-            if (modelStatus.Details.FailureReason !== 'Unknown') {
-                console.error('Training Error: please, send the following trace to the developer:');
-                console.error(modelStatus);
+            if (modelTrainingStatus.status === LuisApi.TrainingStatuses.Failed) {
                 modelTrainingStatus.failureReason = modelStatus.Details.FailureReason;
             }
             return modelTrainingStatus;

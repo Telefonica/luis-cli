@@ -354,17 +354,17 @@ export class LuisTrainer extends EventEmitter {
                     // Debug stuff
                     // console.log(trainingStatus.map(ts => ts.status).join(''));
                     let finishedModels = trainingStatus.filter(modelStatus =>
-                        // The training has finished when the status is "Success" or "Up to date"
-                        // or when there is a failure. Probably there is a status that signal a failure
-                        // but due to the lack of documentation we'll look for the existence of a failure reason
+                        // The training has finished when the status is "Success", "Up to date" or "Failed".
                         modelStatus.status === LuisApi.TrainingStatuses.Success ||
-                        modelStatus.status === LuisApi.TrainingStatuses.UpToDate || !!modelStatus.failureReason);
+                        modelStatus.status === LuisApi.TrainingStatuses.UpToDate ||
+                        modelStatus.status === LuisApi.TrainingStatuses.Failed);
                     this.emit('trainingProgress', finishedModels.length, trainingStatus.length);
                     if (finishedModels.length < trainingStatus.length) {
                         return waitForTraining();
                     }
                     // Look for failures
-                    let failedModels = trainingStatus.filter(modelStatus => modelStatus.failureReason);
+                    let failedModels = trainingStatus
+                        .filter(modelStatus => modelStatus.status === LuisApi.TrainingStatuses.Failed);
                     if (failedModels.length) {
                         let err = new Error(
                             `${failedModels.length} model(s) have failed with the following reasons:\n` +
