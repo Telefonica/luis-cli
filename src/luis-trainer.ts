@@ -27,13 +27,14 @@ export interface UpdateEvent {
     delete: number;
 }
 
-export type PredictionStats = Map<string, { total: number, errors: number }>;
+export type PredictionStats = Map<string, { total: number, errors: number, ambiguities: number }>;
 
 export interface PredictionError {
     text: string;
     tokenizedText?: string[];
     intent: string;
-    predictedIntent?: string;
+    predictedIntents?: string[];
+    ambiguousPredictedIntent?: boolean;
     entities?: LuisApi.LabeledEntity[];
     predictedEntities?: LuisApi.LabeledEntity[];
 }
@@ -88,8 +89,13 @@ export class LuisTrainer extends EventEmitter {
     }
 
     checkPredictions(): Promise<PredictionResult> {
-        function matchPredictedIntent(example: LuisApi.LabeledUtterance): boolean {
-            return example.intent === example.predictedIntents.sort((a: any, b: any) => b.score - a.score)[0].name;
+        // Return the top scoring predicted intents. In case of tie, all the top ones will be returned
+        function getTopPredictedIntents(example: LuisApi.LabeledUtterance): string[] {
+            return example.predictedIntents
+                .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+                .filter((predictedIntent, i, sortedPredictedIntents) =>
+                    predictedIntent.score === sortedPredictedIntents[0].score)
+                .map(predictedIntent => predictedIntent.name);
         }
 
         function matchPredictedEntities(example: LuisApi.LabeledUtterance): boolean {
@@ -108,25 +114,48 @@ export class LuisTrainer extends EventEmitter {
         return this.luisApiClient.getAllExamples()
             .then(examples => {
                 this.emit('endGetAllExamples', examples.length);
+                // Debug stuff
+                // let sortedExamples = examples.sort((a, b) => a.utteranceText.localeCompare(b.utteranceText));
+                // sortedExamples = sortedExamples.map(example => {
+                //     example.predictedIntents = example.predictedIntents.sort((a, b) => a.name.localeCompare(b.name));
+                //     return example;
+                // });
+                // require('fs').writeFileSync(`all-examples-${new Date().toJSON()}.json`, JSON.stringify(sortedExamples, null, 2), 'utf8');
+
                 let errors = examples
-                    // Filter by examples whose labeled intent or entities don't match the predicted ones.
+                    // Filter by examples whose labeled intent or entities don't match the predicted ones (or the
+                    // matching cannot be established because of a tie).
                     // It also checks the tokenization to ensure our algorithm is working as expected.
                     .map(example => {
                         let error: PredictionError = {
                             text: example.utteranceText,
                             intent: example.intent
                         };
-                        if (!matchPredictedIntent(example)) {
-                            error.predictedIntent = example.predictedIntents[0].name;
+
+                        let topPredictedIntents = getTopPredictedIntents(example);
+                        if (topPredictedIntents.indexOf(example.intent) === -1) {
+                            // None of the top scoring predicted intents matches the labeled one
+                            error.ambiguousPredictedIntent = false;
+                            error.predictedIntents = topPredictedIntents;
+                        } else if (topPredictedIntents.length > 1) {
+                            // The labeled intent is one of the top scoring predicted ones
+                            // but they all share the same score
+                            error.ambiguousPredictedIntent = true;
+                            error.predictedIntents = topPredictedIntents;
+                        } else {
+                            // The labeled intent matches the only one top scoring predicted intent
                         }
+
                         if (!matchPredictedEntities(example)) {
                             error.entities = example.entities;
                             error.predictedEntities = example.predictedEntities;
                         }
+
                         if (!matchTokenizedText(example)) {
                             error.tokenizedText = example.tokenizedText;
                         }
-                        if (error.predictedIntent || error.predictedEntities || error.tokenizedText) {
+
+                        if (error.predictedIntents || error.predictedEntities || error.tokenizedText) {
                             return error;
                         } else {
                             return null;
@@ -136,12 +165,18 @@ export class LuisTrainer extends EventEmitter {
 
                 // Calculate stats
                 let exampleCounter = _.countBy(examples, example => example.intent);
-                let intentErrorCounter = _.countBy(errors.filter(error => error.predictedIntent), error => error.intent);
+                let intentErrorCounter = _.countBy(
+                    errors.filter(error => error.predictedIntents && !error.ambiguousPredictedIntent),
+                    error => error.intent);
+                let ambiguousIntentCounter = _.countBy(
+                    errors.filter(error => error.predictedIntents && error.ambiguousPredictedIntent),
+                    error => error.intent);
                 let stats: PredictionStats = new Map();
                 _.forEach(exampleCounter, (counter, intent) => {
                     stats.set(intent, {
                         total: counter,
-                        errors: intentErrorCounter[intent] || 0
+                        errors: intentErrorCounter[intent] || 0,
+                        ambiguities: ambiguousIntentCounter[intent] || 0
                     });
                 });
 
@@ -352,7 +387,7 @@ export class LuisTrainer extends EventEmitter {
                 .then(() => this.luisApiClient.getTrainingStatus())
                 .then((trainingStatus: LuisApi.TrainingStatus) => {
                     // Debug stuff
-                    // console.log(trainingStatus.map(ts => ts.status).join(''));
+                    console.log(trainingStatus.map(ts => ts.status).join(''));
                     let finishedModels = trainingStatus.filter(modelStatus =>
                         // The training has finished when the status is "Success", "Up to date" or "Failed".
                         modelStatus.status === LuisApi.TrainingStatuses.Success ||
@@ -381,7 +416,11 @@ export class LuisTrainer extends EventEmitter {
 
         this.emit('startTraining');
         return this.luisApiClient.startTraining()
-            .then(() => waitForTraining())
+            .then((trainingStatus) => {
+                // Debug stuff
+                console.log(trainingStatus.map(ts => ts.status).join(''));
+                return waitForTraining();
+            })
             // TODO: Catch the error when there already is a training ongoing to wait for it
             .catch(err => LuisTrainer.wrapError(err, 'Error trying to train models'));
     }
