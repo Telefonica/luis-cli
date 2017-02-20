@@ -293,7 +293,8 @@ function checkPrediction(luisTrainer: LuisTrainer, applicationId: string, filena
                 }
 
                 // Write the error details to the file
-                fs.writeFileSync(filename, JSON.stringify(predictionResult.errors, null, 2));
+                let sortedErrors = predictionResult.errors.sort((a, b) => a.intent.localeCompare(b.intent));
+                fs.writeFileSync(filename, JSON.stringify(sortedErrors, null, 2));
                 console.log(`\nAll the prediction errors have been saved in "${filename}"`);
 
                 // Print intent stats

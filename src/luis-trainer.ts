@@ -88,8 +88,17 @@ export class LuisTrainer extends EventEmitter {
             .then(() => Promise.resolve());
     }
 
+    /**
+     * Check whether the labeled intent and entities for each example match the predicted ones, that is,
+     * the recognized intent and entities after being trained the app are the expected ones.
+     * We are gathering predictions from the provisioning API that allows us to download all the examples
+     * but such an API gives a very low precession for the predicted intent score parameter, which
+     * sometimes makes impossible to correctly know the predicted intent because several predicted intents
+     * with very close scores will be rounded to 2 decimals and will tie.
+     *   Example: intent1's score: 0.87614, intent2's score: 0.87828. Both scores will be rounded to 0.88
+     */
     checkPredictions(): Promise<PredictionResult> {
-        // Return the top scoring predicted intents. In case of tie, all the top ones will be returned
+        // Return the top scoring predicted intents. In case of tie, all the top ones will be returned.
         function getTopPredictedIntents(example: LuisApi.LabeledUtterance): string[] {
             return example.predictedIntents
                 .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
