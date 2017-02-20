@@ -387,7 +387,7 @@ export class LuisTrainer extends EventEmitter {
                 .then(() => this.luisApiClient.getTrainingStatus())
                 .then((trainingStatus: LuisApi.TrainingStatus) => {
                     // Debug stuff
-                    console.log(trainingStatus.map(ts => ts.status).join(''));
+                    // console.log(trainingStatus.map(ts => ts.status).join(''));
                     let finishedModels = trainingStatus.filter(modelStatus =>
                         // The training has finished when the status is "Success", "Up to date" or "Failed".
                         modelStatus.status === LuisApi.TrainingStatuses.Success ||
@@ -418,7 +418,7 @@ export class LuisTrainer extends EventEmitter {
         return this.luisApiClient.startTraining()
             .then((trainingStatus) => {
                 // Debug stuff
-                console.log(trainingStatus.map(ts => ts.status).join(''));
+                // console.log(trainingStatus.map(ts => ts.status).join(''));
                 return waitForTraining();
             })
             // TODO: Catch the error when there already is a training ongoing to wait for it
