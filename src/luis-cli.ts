@@ -270,12 +270,20 @@ function checkPrediction(luisTrainer: LuisTrainer, applicationId: string, filena
     return luisTrainer.checkPredictions()
         .then(predictionResult => {
             if (predictionResult.errors.length) {
-                let intentErrors = predictionResult.errors.filter(error => error.predictedIntent).length;
+                // Print a summary of errors
+                let intentErrors = predictionResult.errors.filter(error =>
+                    error.predictedIntents && !error.ambiguousPredictedIntent).length;
+                let ambiguousIntentErrors = predictionResult.errors.filter(error =>
+                    error.predictedIntents && error.ambiguousPredictedIntent).length;
                 let entityErrors = predictionResult.errors.filter(error => error.predictedEntities).length;
                 let tokenizationErrors = predictionResult.errors.filter(error => error.tokenizedText).length;
                 console.log('\nThe following prediction errors have been found:');
                 if (intentErrors) {
                     console.log(`  - ${colors.bold(intentErrors.toString())} examples whose predicted intent is wrong.`);
+                }
+                if (ambiguousIntentErrors) {
+                    console.log(`  - ${colors.bold(ambiguousIntentErrors.toString())} examples who has more than one ` +
+                        `predicted intent that match the labeled one`);
                 }
                 if (entityErrors) {
                     console.log(`  - ${colors.bold(entityErrors.toString())} examples whose predicted entities are wrong.`);
@@ -283,27 +291,55 @@ function checkPrediction(luisTrainer: LuisTrainer, applicationId: string, filena
                 if (tokenizationErrors) {
                     console.log(`  - ${colors.bold(tokenizationErrors.toString())} examples have been incorrectly tokenized.`);
                 }
-                fs.writeFileSync(filename, JSON.stringify(predictionResult.errors, null, 2));
+
+                // Write the error details to the file
+                let sortedErrors = predictionResult.errors.sort((a, b) => a.intent.localeCompare(b.intent));
+                fs.writeFileSync(filename, JSON.stringify(sortedErrors, null, 2));
                 console.log(`\nAll the prediction errors have been saved in "${filename}"`);
 
-                // Print stats
-                console.log('\nIntent prediction errors:');
-                let longestIntentLen = Array.from(predictionResult.stats.keys()).concat('TOTAL')
-                    .reduce((a, b) => a.length > b.length ? a : b).length;
+                // Print intent stats
+                console.log(`\n\n  ${colors.bold('INTENT PREDICTION ERRORS')}\n`);
+
+                const HEADERS = {COL1: 'INTENTS', COL2: 'ERRORS', COL3: 'AMBIGUITIES'};
+                let longestIntentLen = 0;
                 let total = 0;
                 let totalErrors = 0;
-                console.log('  ' + '='.repeat(longestIntentLen + 20));
-                predictionResult.stats.forEach((stats, intent) => {
+                let totalAmbiguities = 0;
+
+                let strStats: {intent: string, errors: string, ambiguities: string, color: Function}[] = [];
+                let sortedStats = new Map([...predictionResult.stats.entries()].sort());
+                sortedStats.forEach((stats, intent) => {
+                    if (intent.length > longestIntentLen) {
+                        longestIntentLen = intent.length;
+                    }
                     total += stats.total;
                     totalErrors += stats.errors;
-                    let color = stats.errors > 0 ? colors.red : colors.green;
-                    console.log(sprintf(`  %${longestIntentLen}s: ${color('%6.2f%% (%d/%d)')}`,
-                        intent, stats.errors / stats.total * 100, stats.errors, stats.total));
+                    totalAmbiguities += stats.ambiguities;
+                    strStats.push({
+                        intent,
+                        errors: sprintf('%6.2f%% (%d/%d)', stats.errors / stats.total * 100, stats.errors, stats.total),
+                        ambiguities: sprintf('%6.2f%% (%d/%d)', stats.ambiguities / stats.total * 100, stats.ambiguities, stats.total),
+                        color: stats.errors > 0 ? colors.red : stats.ambiguities > 0 ? colors.blue : colors.green
+                    });
                 });
-                console.log('  ' + '='.repeat(longestIntentLen + 20));
-                let color = totalErrors > 0 ? colors.red : colors.green;
-                console.log(sprintf(colors.bold(`  %${longestIntentLen}s: ${color('%6.2f%% (%d/%d)')}`),
-                    'TOTAL', totalErrors / total * 100, totalErrors, total));
+
+                let strTotalErrors = sprintf('%6.2f%% (%d/%d)', totalErrors / total * 100, totalErrors, total);
+                let strTotalAmbiguities = sprintf('%6.2f%% (%d/%d)', totalAmbiguities / total * 100, totalAmbiguities, total);
+                let color = totalErrors > 0 ? colors.red : totalAmbiguities > 0 ? colors.blue : colors.green;
+
+                let col1Len = Math.max(HEADERS.COL1.length, longestIntentLen);
+                let col2Len = Math.max(HEADERS.COL2.length, strTotalErrors.length);
+                let col3Len = Math.max(HEADERS.COL3.length, strTotalAmbiguities.length);
+                console.log('  ' + colors.bold(sprintf(`%${col1Len}s  %-${col2Len}s  %-${col3Len}s`,
+                    HEADERS.COL1, HEADERS.COL2, HEADERS.COL3)));
+                console.log('  ' + '='.repeat(col1Len + 2 + col2Len + 2 + col3Len + 1));
+                strStats.forEach(line => {
+                    console.log('  ' + sprintf(`%${col1Len}s  ${line.color(`%-${col2Len}s  %-${col3Len}s`)}`,
+                        line.intent, line.errors, line.ambiguities));
+                });
+                console.log('  ' + '='.repeat(col1Len + 2 + col2Len + 2 + col3Len + 1));
+                console.log('  ' + colors.bold(sprintf(`%${col1Len}s  ${color(`%-${col2Len}s  %-${col3Len}s`)}`,
+                    'TOTAL', color(strTotalErrors), color(strTotalAmbiguities))));
 
                 return predictionResult.errors.length;
             } else {
