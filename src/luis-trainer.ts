@@ -50,7 +50,7 @@ interface Token {
     endChar: number;
 }
 
-interface RecognizedEntity {
+interface FoundEntity {
     word: string;
     startChar: number;
     endChar: number;
@@ -195,6 +195,96 @@ export class LuisTrainer extends EventEmitter {
                 } as PredictionResult;
             });
 
+    }
+
+    /**
+     * Send a set of examples to be recognized by the application to verify that the expected intent
+     * and entities match the labeled one.
+     */
+    testExamples(examples: LuisModel.Utterance[]): Promise<PredictionResult> {
+        function matchRecognizedEntities(
+            labeledEntities: LuisApi.LabeledEntity[],
+            recognizedEntities: LuisApi.RecognizedEntity[]): boolean {
+            // Recognized entities must have at least the labeled entities.
+            // If there are some extra recognized entities, it is not an issue.
+            return _.differenceWith(labeledEntities, recognizedEntities,
+                (labeled: LuisApi.LabeledEntity, recognized: LuisApi.RecognizedEntity) =>
+                    labeled.name === recognized.type &&
+                    labeled.word === recognized.entity &&
+                    labeled.startToken === recognized.startIndex &&
+                    labeled.endToken === recognized.endIndex
+            ).length === 0;
+        }
+
+        this.luisApiClient.on('recognizeSentence', (sentence: string) =>
+            this.emit('recognizeSentence', sentence));
+
+        return this.luisApiClient.recognizeSentences(examples.map(example => example.text))
+            .then(recognitionResults => {
+                let errors = recognitionResults
+                    // Filter by examples whose labeled intent or entities don't match the predicted ones.
+                    .map((recognitionResult, i) => {
+                        let example = examples[i];
+                        let error: PredictionError = {
+                            text: example.text,
+                            intent: example.intent
+                        };
+
+                        // Compare intents
+                        if (example.intent !== recognitionResult.intent) {
+                            error.ambiguousPredictedIntent = false;
+                            error.predictedIntents = [recognitionResult.intent];
+                        }
+
+                        // Compare entities
+                        let labeledEntities = example.entities.map(entity => {
+                            let foundEntity = LuisTrainer.findEntity(example.text, entity.startPos, entity.endPos);
+                            return {
+                                name: entity.entity,
+                                startToken: foundEntity.startChar,
+                                endToken: foundEntity.endChar,
+                                word: foundEntity.word,
+                                isBuiltInExtractor: false
+                            } as LuisApi.LabeledEntity;
+                        });
+                        if (!matchRecognizedEntities(labeledEntities, recognitionResult.entities)) {
+                            error.entities = labeledEntities;
+                            error.predictedEntities = recognitionResult.entities.map(entity => {
+                                return {
+                                    name: entity.type,
+                                    startToken: entity.startIndex,
+                                    endToken: entity.endIndex,
+                                    word: entity.entity,
+                                    isBuiltInExtractor: false
+                                } as LuisApi.LabeledEntity;
+                            });
+                        }
+
+                        if (error.predictedIntents || error.predictedEntities) {
+                            return error;
+                        } else {
+                            return null;
+                        }
+                    })
+                    .filter(example => example !== null);
+
+                // Calculate stats
+                let exampleCounter = _.countBy(examples, example => example.intent);
+                let intentErrorCounter = _.countBy(errors.filter(error => error.predictedIntents), error => error.intent);
+                let stats: PredictionStats = new Map();
+                _.forEach(exampleCounter, (counter, intent) => {
+                    stats.set(intent, {
+                        total: counter,
+                        errors: intentErrorCounter[intent] || 0,
+                        ambiguities: 0
+                    });
+                });
+
+                return {
+                    stats,
+                    errors
+                } as PredictionResult;
+            });
     }
 
     private static wrapError(error: Error, message: string) {
@@ -343,11 +433,11 @@ export class LuisTrainer extends EventEmitter {
                         exampleText: example.text,
                         selectedIntentName: example.intent,
                         entityLabels: example.entities.map(entity => {
-                            let recognizedEntity = LuisTrainer.recognizeEntity(example.text, entity.startPos, entity.endPos);
+                            let foundEntity = LuisTrainer.findEntity(example.text, entity.startPos, entity.endPos);
                             return {
                                 entityType: entity.entity,
-                                startToken: recognizedEntity.startChar,
-                                endToken: recognizedEntity.endChar
+                                startToken: foundEntity.startChar,
+                                endToken: foundEntity.endChar
                             } as LuisApi.Entity;
                         })
                     } as LuisApi.Example;
@@ -517,7 +607,7 @@ export class LuisTrainer extends EventEmitter {
     /**
      * Find the entity text inside the sentence from its start and end positions.
      */
-    private static recognizeEntity(sentence: string, startPos: number, endPos: number): RecognizedEntity {
+    private static findEntity(sentence: string, startPos: number, endPos: number): FoundEntity {
         let tokens = LuisTrainer.splitSentenceByTokens(sentence);
 
         if (startPos < 0 || startPos >= tokens.length || endPos < 0 || endPos >= tokens.length) {
@@ -530,7 +620,7 @@ export class LuisTrainer extends EventEmitter {
             word,
             startChar,
             endChar
-        } as RecognizedEntity;
+        } as FoundEntity;
     }
 
 }

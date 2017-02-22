@@ -29,6 +29,19 @@ declare module 'request' {
 }
 
 export namespace LuisApi {
+    export interface RecognizedEntity {
+        entity: string;
+        type: string;
+        startIndex: number;
+        endIndex: number;
+    }
+
+    export interface RecognitionResult {
+        sentence: string;
+        intent: string;
+        entities: RecognizedEntity[];
+    }
+
     export interface AppInfo {
         id: string;
         name: string;
@@ -113,6 +126,8 @@ export namespace LuisApi {
 }
 
 const LUIS_API_BASE_URL = 'https://westus.api.cognitive.microsoft.com';
+// Alternative endpoint only for the service API in order to use the private endpoint deployed in EU
+const LUIS_SERVICE_API_BASE_URL = 'http://luis-europe-west-endpoint.cloudapp.net';
 const RETRY_OPTS = {
     retries: 10,
     factor: 2,
@@ -120,6 +135,7 @@ const RETRY_OPTS = {
 };
 // Maximum number of parallel requests per second to send to the API (to minimize 429 rate errors)
 const REQUESTS_PER_SECOND = 4;
+const SERVICE_API_REQUESTS_PER_SECOND = 20;  // The private endpoint is not throttled
 // count parameter of the getExamples API (the API doesn't support more than 100)
 const MAX_EXAMPLES_COUNT = 100;
 // Number of parallel getExamples requests to get all the examples (still rated by REQUESTS_PER_SECOND)
@@ -136,14 +152,27 @@ export interface LuisApiClientConfig {
 
 export class LuisApiClient extends EventEmitter {
     protected applicationId: string = null;
-    private readonly req: any;
+    private readonly serviceReq: any;
+    private readonly provisionReq: any;
     private readonly promiseThrottle: any;
 
     constructor(config: LuisApiClientConfig) {
         super();
         this.applicationId = config.applicationId;
         let baseUrl = config.baseUrl || LUIS_API_BASE_URL;
-        this.req = request.defaults({
+        this.serviceReq = request.defaults({
+            // XXX: the public service API use a slightly different path, so this should be changed in the future
+            baseUrl: `${LUIS_SERVICE_API_BASE_URL}/api/v2.0/apps/${this.applicationId}`,
+            qs: {
+                'subscription-key': config.subscriptionKey,
+                verbose: false,
+                spellCheck: false
+            },
+            json: true,
+            simple: false,
+            resolveWithFullResponse: true
+        });
+        this.provisionReq = request.defaults({
             baseUrl: `${baseUrl}/luis/v1.0/prog/apps`,
             headers: {
                 'Ocp-Apim-Subscription-Key': config.subscriptionKey
@@ -163,7 +192,7 @@ export class LuisApiClient extends EventEmitter {
      */
     private retryRequest(opts: request.Options, expectedStatusCode: number): Promise<RequestResponse> {
         return promiseRetry((retry: Function, number: number) => {
-            return this.req(opts)
+            return this.provisionReq(opts)
                 .then((res: RequestResponse) => {
                     if (res.statusCode === 429) {
                         this.emit('tooManyRequests');
@@ -184,6 +213,44 @@ export class LuisApiClient extends EventEmitter {
     private throttler(fn: Function, items: any[]): Promise<any> {
         let promises = items.map(item => this.promiseThrottle.add(fn.bind(this, item)));
         return Promise.all(promises);
+    }
+
+    recognizeSentence(sentence: string): Promise<LuisApi.RecognitionResult> {
+        let opts: request.Options = {
+            method: 'GET',
+            uri: '',
+            qs: { q: sentence }
+        };
+        return this.serviceReq(opts)
+            .then((res: RequestResponse) => {
+                if (res.statusCode !== 200) {
+                    return Promise.reject(new Error(`LuisApiClient: Unexpected status code: ${res.statusCode}:\n` +
+                        JSON.stringify(res.body, null, 2)));
+                }
+
+                this.emit('recognizeSentence', sentence);
+                return {
+                    sentence: res.body.query,
+                    intent: res.body.topScoringIntent.intent,
+                    entities: res.body.entities.map((entity: any) => {
+                        return {
+                            entity: entity.entity,
+                            type: entity.type,
+                            startIndex: entity.startIndex,
+                            endIndex: entity.endIndex
+                        } as LuisApi.RecognizedEntity;
+                    })
+                } as LuisApi.RecognitionResult;
+            });
+    }
+
+    recognizeSentences(sentences: string[]): Promise<LuisApi.RecognitionResult[]> {
+        let promiseThrottle = new PromiseThrottle({
+            requestsPerSecond: SERVICE_API_REQUESTS_PER_SECOND,
+            promiseImplementation: Promise
+        });
+        let promises = sentences.map(sentence => promiseThrottle.add(this.recognizeSentence.bind(this, sentence)));
+        return Promise.all(promises) as Promise<LuisApi.RecognitionResult[]>;
     }
 
     getApp(): Promise<LuisApi.AppInfo> {
