@@ -280,7 +280,7 @@ export class LuisApiClient extends EventEmitter {
             uri: `${this.applicationId}/intents`
         };
         return this.retryRequest(opts, 200)
-            .then((res: RequestResponse) => res.body)
+            .then((res: RequestResponse) => res.body.Result)
             .then((intents) => intents.map((intent: any) => {
                 return {
                     id: intent.id,
@@ -333,7 +333,7 @@ export class LuisApiClient extends EventEmitter {
             uri: `${this.applicationId}/entities`
         };
         return this.retryRequest(opts, 200)
-            .then((res: RequestResponse) => res.body)
+            .then((res: RequestResponse) => res.body.Result)
             .then((entities) => entities.map((entity: any) => {
                 return {
                     id: entity.id,
