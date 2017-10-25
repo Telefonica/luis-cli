@@ -25,24 +25,14 @@ import { Luis as LuisModel } from '@telefonica/language-model-converter/lib/luis
 
 const DEFAULT_LUIS_ENDPOINT = 'https://westus.api.cognitive.microsoft.com';
 
-enum Commands { Update, Export, CheckPredictions, TestExamples };
-let command: Commands;
+enum Commands { Update, Export, CheckPredictions, TestExamples }
 
-let runner: Promise<number> = null;
+let runner: Promise<number | void> = null;
 
-interface ProgramOptions extends commander.ICommand {
-    parent?: ProgramOptions;  // When using commands, `parent` holds options from the main program
-    endpoint?: string;
-    applicationId?: string;
-    model?: string;
-    errors?: string;
-    subscriptionKey?: string;
-}
-
-const program: ProgramOptions = commander
+const program = commander
     .usage('command [options]')
     .option('-e, --endpoint <endpoint>', `LUIS endpoint (also got from the LUIS_ENDPOINT env var) [${DEFAULT_LUIS_ENDPOINT}]`,
-        DEFAULT_LUIS_ENDPOINT)
+    DEFAULT_LUIS_ENDPOINT)
     .option('-s, --subscription-key <subscription-key>', 'LUIS subscription key (also got from the LUIS_SUBSCRIPTION_KEY env var)');
 
 program
@@ -50,8 +40,9 @@ program
     .description('Update a LUIS application with the model from <filename>')
     .option('-a, --application-id <application-id>', 'LUIS application id (also got from the LUIS_APPLICATION_ID env var)')
     .option('-m, --model <filename>', 'JSON file containing the model to upload to the LUIS application')
+    .option('-v, --app-version <app-version>', 'The version of the application to update')
     .action(options => selectRunner(Commands.Update, options))
-    .on('--help', function() {
+    .on('--help', function () {
         console.log('  Example:');
         console.log();
         console.log(`    Update an application using the model from the file 'model.json':`);
@@ -64,7 +55,7 @@ program
     .option('-a, --application-id <application-id>', 'LUIS application id (also got from the LUIS_APPLICATION_ID env var)')
     .option('-m, --model <filename>', 'file where the LUIS application will be exported to')
     .action(options => selectRunner(Commands.Export, options))
-    .on('--help', function() {
+    .on('--help', function () {
         console.log('  Example:');
         console.log();
         console.log(`    Export an application to the file 'model.json':`);
@@ -77,7 +68,7 @@ program
     .option('-a, --application-id <application-id>', 'LUIS application id (also got from the LUIS_APPLICATION_ID env var)')
     .option('-r, --errors <filename>', `JSON file where prediction errors will be stored`)
     .action(options => selectRunner(Commands.CheckPredictions, options))
-    .on('--help', function() {
+    .on('--help', function () {
         console.log('  Example:');
         console.log();
         console.log(`    Check whether an application correctly predict intents and entities and save differences to 'errors.json':`);
@@ -91,10 +82,11 @@ program
     .option('-m, --model <filename>', 'JSON file containing the model whose examples will be used to test the LUIS application')
     .option('-r, --errors <filename>', `JSON file where prediction errors will be stored`)
     .action(options => selectRunner(Commands.TestExamples, options))
-    .on('--help', function() {
+    .on('--help', function () {
         console.log('  Example:');
         console.log();
-        console.log(`    Check whether a set of examples are correctly recognized by an application in terms of intent and entities and save differences to 'errors.json':`);
+        console.log('    Check whether a set of examples are correctly recognized by an application in terms of intent and entities ' +
+            'and save differences to \'errors.json\':');
         console.log('      $ luis-cli check -m model.json -a XXX -f errors.json -s YYY');
     });
 
@@ -110,7 +102,7 @@ runner.then((exitCode: number) => {
 });
 
 
-function selectRunner(command: Commands, options: ProgramOptions) {
+function selectRunner(command: Commands, options: any) {
     // Get values from env vars if not provided via options
     let endpoint = options.parent.endpoint || process.env.LUIS_ENDPOINT;
     let subscriptionKey = options.parent.subscriptionKey || process.env.LUIS_SUBSCRIPTION_KEY;
@@ -122,7 +114,7 @@ function selectRunner(command: Commands, options: ProgramOptions) {
             'or the `LUIS_SUBSCRIPTION_KEY` env var.');
     }
     if ((command === Commands.Update || command === Commands.Export || command === Commands.CheckPredictions ||
-         command === Commands.TestExamples) && !applicationId) {
+        command === Commands.TestExamples) && !applicationId) {
         printError('unknown LUIS application id. Provide one through the `-a, --application-id` option ' +
             'or the `LUIS_APPLICATION_ID` env var.');
     }
@@ -138,24 +130,33 @@ function selectRunner(command: Commands, options: ProgramOptions) {
 
     switch (command) {
         case Commands.Update:
+            if (!options.appVersion) {
+                printError('missing version of the model to update. Provide one through the `-v, --version` option.');
+            }
             if (!options.model) {
                 printError('missing JSON file from which the model will be read. Provide one through the `-m, --model` option.');
             }
-            runner = updateApp(luisTrainer, applicationId, options.model);
+            runner = updateApp(luisTrainer, applicationId, options.appVersion, options.model);
             break;
 
         case Commands.Export:
+            if (!options.appVersion) {
+                printError('missing version of the model to update. Provide one through the `-v, --version` option.');
+            }
             if (!options.model) {
                 printError('missing JSON file to which the application will be exported. Provide one through the `-m, --model` option.');
             }
-            runner = exportApp(luisTrainer, applicationId, options.model);
+            runner = exportApp(luisTrainer, applicationId, options.appVersion, options.model);
             break;
 
         case Commands.CheckPredictions:
+            if (!options.appVersion) {
+                printError('missing version of the model to update. Provide one through the `-v, --version` option.');
+            }
             if (!options.errors) {
                 printError('missing JSON file to which the differences will be saved. Provide one through the `-r, --errors` option.');
             }
-            runner = checkPrediction(luisTrainer, applicationId, options.errors);
+            runner = checkPrediction(luisTrainer, applicationId, options.appVersion, options.errors);
             break;
 
         case Commands.TestExamples:
@@ -170,7 +171,7 @@ function selectRunner(command: Commands, options: ProgramOptions) {
     }
 }
 
-function updateApp(luisTrainer: LuisTrainer, applicationId: string, modelFilename: string): Promise<number> {
+function updateApp(luisTrainer: LuisTrainer, applicationId: string, appVersion: string, modelFilename: string): Promise<number | void> {
     let model: LuisModel.Model;
     try {
         model = JSON.parse(fs.readFileSync(modelFilename, 'utf8'));
@@ -182,7 +183,7 @@ function updateApp(luisTrainer: LuisTrainer, applicationId: string, modelFilenam
         }
     }
 
-    console.log(`Updating the application ${applicationId} with the model from "${modelFilename}"...`);
+    console.log(`Updating the version ${appVersion} of the application ${applicationId} with the model from "${modelFilename}"...`);
     console.log();
     luisTrainer.on('startUpdateIntents', (stats: UpdateEvent) => {
         console.log(`Updating intents: deleting ${stats.delete} intents no longer needed ` +
@@ -261,7 +262,7 @@ function updateApp(luisTrainer: LuisTrainer, applicationId: string, modelFilenam
         console.log();
     });
 
-    return luisTrainer.update(model)
+    return luisTrainer.update(appVersion, model)
         .then(() => {
             console.log('The application has been successfully updated');
             return 0;
@@ -269,9 +270,9 @@ function updateApp(luisTrainer: LuisTrainer, applicationId: string, modelFilenam
         .catch(handleError);
 }
 
-function exportApp(luisTrainer: LuisTrainer, applicationId: string, modelFilename: string): Promise<number> {
+function exportApp(luisTrainer: LuisTrainer, applicationId: string, appVersion: string, modelFilename: string): Promise<number | void> {
     console.log(`Exporting the application ${applicationId} to "${modelFilename}"...`);
-    return luisTrainer.export()
+    return luisTrainer.export(appVersion)
         .then(model => {
             fs.writeFileSync(modelFilename, JSON.stringify(model, null, 2));
             console.log(`The application has been exported to "${modelFilename}"`);
@@ -280,7 +281,8 @@ function exportApp(luisTrainer: LuisTrainer, applicationId: string, modelFilenam
         .catch(handleError);
 }
 
-function checkPrediction(luisTrainer: LuisTrainer, applicationId: string, errorsFilename: string): Promise<number> {
+function checkPrediction(luisTrainer: LuisTrainer, applicationId: string, appVersion: string,
+    errorsFilename: string): Promise<number | void> {
     console.log(`Checking predictions for the application ${applicationId}...`);
 
     luisTrainer.on('startGetAllExamples', () => {
@@ -291,7 +293,7 @@ function checkPrediction(luisTrainer: LuisTrainer, applicationId: string, errors
         console.log(`\nGot ${numberOfExamples} examples.`);
     });
 
-    return luisTrainer.checkPredictions()
+    return luisTrainer.checkPredictions(appVersion)
         .then(predictionResult => {
             if (predictionResult.errors.length) {
                 processPredictionResult(predictionResult, errorsFilename);
@@ -304,7 +306,8 @@ function checkPrediction(luisTrainer: LuisTrainer, applicationId: string, errors
         .catch(handleError);
 }
 
-function testExamples(luisTrainer: LuisTrainer, applicationId: string, modelFilename: string, errorsFilename: string): Promise<number> {
+function testExamples(luisTrainer: LuisTrainer, applicationId: string, modelFilename: string,
+    errorsFilename: string): Promise<number | void> {
     let model: LuisModel.Model;
     try {
         model = JSON.parse(fs.readFileSync(modelFilename, 'utf8'));
@@ -344,9 +347,9 @@ function testExamples(luisTrainer: LuisTrainer, applicationId: string, modelFile
 function processPredictionResult(predictionResult: PredictionResult, errorsFilename: string) {
     // Print a summary of errors
     let intentErrors = predictionResult.errors.filter(error =>
-        error.predictedIntents && !error.ambiguousPredictedIntent).length;
+        error.intentPredictions && !error.ambiguousPredictedIntent).length;
     let ambiguousIntentErrors = predictionResult.errors.filter(error =>
-        error.predictedIntents && error.ambiguousPredictedIntent).length;
+        error.intentPredictions && error.ambiguousPredictedIntent).length;
     let entityErrors = predictionResult.errors.filter(error => error.predictedEntities).length;
     let tokenizationErrors = predictionResult.errors.filter(error => error.tokenizedText).length;
     console.log('\nThe following prediction errors have been found:');
@@ -372,13 +375,13 @@ function processPredictionResult(predictionResult: PredictionResult, errorsFilen
     // Print intent stats
     console.log(`\n\n  ${colors.bold('INTENT PREDICTION ERRORS')}\n`);
 
-    const HEADERS = {COL1: 'INTENTS', COL2: 'ERRORS', COL3: 'AMBIGUITIES'};
+    const HEADERS = { COL1: 'INTENTS', COL2: 'ERRORS', COL3: 'AMBIGUITIES' };
     let longestIntentLen = 0;
     let total = 0;
     let totalErrors = 0;
     let totalAmbiguities = 0;
 
-    let strStats: {intent: string, errors: string, ambiguities: string, color: Function}[] = [];
+    let strStats: { intent: string, errors: string, ambiguities: string, color: Function }[] = [];
     let sortedStats = new Map([...predictionResult.stats.entries()].sort());
     sortedStats.forEach((stats, intent) => {
         if (intent.length > longestIntentLen) {

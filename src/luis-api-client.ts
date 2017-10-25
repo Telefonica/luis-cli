@@ -21,93 +21,143 @@ const promiseRetry = require('promise-retry');
 const PromiseThrottle = require('promise-throttle');
 import { EventEmitter } from 'events';
 import { RequestResponse } from 'request';
-// Fix the `RequestResponse` interface exported by the `request` module which is missing the `body` property
-declare module 'request' {
-    interface RequestResponse {
-        body?: any;
-    }
-}
 
 export namespace LuisApi {
+    /* See: https://westus.dev.cognitive.microsoft.com/docs/services/5890b47c39e2bb17b84a55ff/operations/5890b47c39e2bb052c5b9c37 */
+    export interface AppInfoGET {
+        id: string;
+        name: string;
+        description: string;
+        culture: string;
+    }
+
+    /*
+        See:
+        - GET: https://westus.dev.cognitive.microsoft.com/docs/services/5890b47c39e2bb17b84a55ff/operations/5890b47c39e2bb052c5b9c0d
+        - POST: https://westus.dev.cognitive.microsoft.com/docs/services/5890b47c39e2bb17b84a55ff/operations/5890b47c39e2bb052c5b9c0c
+        - DELETE: https://westus.dev.cognitive.microsoft.com/docs/services/5890b47c39e2bb17b84a55ff/operations/5890b47c39e2bb052c5b9c1c
+    */
+    export interface IntentGET {
+        id: string;
+        name: string;
+        typeId: number;
+        readableType: string;
+    }
+    export interface IntentPOST {
+        name: string;
+    }
+    export interface IntentDELETE {
+        id: string;
+    }
+
+    /*
+        See:
+        - GET: https://westus.dev.cognitive.microsoft.com/docs/services/5890b47c39e2bb17b84a55ff/operations/5890b47c39e2bb052c5b9c0f
+        - POST: https://westus.dev.cognitive.microsoft.com/docs/services/5890b47c39e2bb17b84a55ff/operations/5890b47c39e2bb052c5b9c0e
+        - DELETE: https://westus.dev.cognitive.microsoft.com/docs/services/5890b47c39e2bb17b84a55ff/operations/5890b47c39e2bb052c5b9c1f
+    */
+    export interface EntityGET {
+        id: string;
+        name: string;
+        typeId: number;
+        readableType: string;
+    }
+    export interface EntityPOST {
+        name: string;
+    }
+    export interface EntityDELETE {
+        id: string;
+    }
+
+    /*
+        See:
+        - GET: https://westus.dev.cognitive.microsoft.com/docs/services/5890b47c39e2bb17b84a55ff/operations/5890b47c39e2bb052c5b9c00
+        - POST: https://westus.dev.cognitive.microsoft.com/docs/services/5890b47c39e2bb17b84a55ff/operations/5890b47c39e2bb052c5b9bff
+        - DELETE: https://westus.dev.cognitive.microsoft.com/docs/services/5890b47c39e2bb17b84a55ff/operations/5890b47c39e2bb052c5b9c07
+    */
+    export interface PhraseListGET {
+        id: number;
+        name: string;
+        isActive: boolean;
+        isExchangeable: boolean;
+        phrases: string;
+    }
+    export interface PhraseListPOST {
+        name: string;
+        phrases: string;
+        isExchangeable: boolean;
+    }
+    export interface PhraseListDELETE {
+        id: string;
+    }
+
+    /*
+        See:
+        - GET: https://westus.dev.cognitive.microsoft.com/docs/services/5890b47c39e2bb17b84a55ff/operations/5890b47c39e2bb052c5b9c0a
+        - POST: https://westus.dev.cognitive.microsoft.com/docs/services/5890b47c39e2bb17b84a55ff/operations/5890b47c39e2bb052c5b9c08
+        - DELETE: https://westus.dev.cognitive.microsoft.com/docs/services/5890b47c39e2bb17b84a55ff/operations/5890b47c39e2bb052c5b9c0b
+    */
+    export interface EntityLabelExampleGET {
+        entityName: string;
+        startTokenIndex: number;
+        endTokenIndex: number;
+    }
+    export interface EntityLabelExamplePOST {
+        entityName: string;
+        startCharIndex: number;
+        endCharIndex: number;
+    }
+    export interface IntentPrediction {
+        name: string;
+        score: number;
+    }
+    export interface EntityPrediction {
+        entityName: string;
+        startIndex: number;
+        endIndex: number;
+        phrase: string;
+    }
+    export interface ExampleGET {
+        id: number;
+        text: string;
+        tokenizedText: string[];
+        intentLabel: string;
+        entityLabels: EntityLabelExampleGET[];
+        intentPredictions: IntentPrediction[];
+        entityPredictions: EntityPrediction[];
+    }
+    export interface ExamplePOST {
+        text: string;
+        intentName: string;
+        entityLabels: EntityLabelExamplePOST[];
+    }
+    export interface ExampleDELETE {
+        id: number;
+    }
+
+    /*
+        See:
+        - GET: https://westus.dev.cognitive.microsoft.com/docs/services/5819c76f40a6350ce09de1ac/operations/5819c77140a63516d81aee78
+    */
+    export interface RecognizedIntent {
+        intent: string;
+        score: number;
+    }
     export interface RecognizedEntity {
         entity: string;
         type: string;
         startIndex: number;
         endIndex: number;
+        score: number;
     }
-
     export interface RecognitionResult {
-        sentence: string;
-        intent: string;
+        query: string;
+        topScoringIntent: RecognizedIntent;
+        intents: RecognizedIntent[];
         entities: RecognizedEntity[];
     }
 
-    export interface AppInfo {
-        id: string;
-        name: string;
-        description: string;
-        culture: string;
-        active: boolean;
-        numberOfIntents: number;
-        numberOfEntities: number;
-        isTrained: boolean;
-    }
-
-    export interface IntentClassifier {
-        id: string;
-        name: string;
-    }
-
-    export interface EntityExtractor {
-        id: string;
-        name: string;
-    }
-
-    export enum PhraseListModes { Exchangeable, NonExchangeable }
-
-    export interface PhraseList {
-        id?: string;
-        name: string;
-        mode: PhraseListModes;
-        isActive?: boolean;
-        editable?: boolean;
-        phrases: string;
-    }
-
-    export interface LabeledEntity {
-        name: string;
-        startToken: number;
-        endToken: number;
-        word: string;
-        isBuiltInExtractor: boolean;
-    }
-
-    export interface LabeledUtterance {
-        id: string;
-        utteranceText: string;
-        tokenizedText: string[];
-        intent: string;
-        predictedIntents: [{
-            name: string;
-            score: number;
-        }];
-        entities: LabeledEntity[];
-        predictedEntities: LabeledEntity[];
-    }
-
-    export interface Entity {
-        entityType: string;
-        startToken: number;
-        endToken: number;
-    }
-
-    export interface Example {
-        exampleText: string;
-        selectedIntentName: string;
-        entityLabels?: Entity[];
-    }
-
-    export enum TrainingStatuses { Success = 0, Failed = 1, UpToDate = 2, InProgress = 3 }
+    export enum TrainingStatuses { Success = 0, Fail = 1, UpToDate = 2, InProgress = 3 }
 
     export interface ModelTrainingStatus {
         modelId: string;
@@ -119,15 +169,14 @@ export namespace LuisApi {
     export type TrainingStatus = ModelTrainingStatus[];
 
     export interface PublishResult {
-        url: string;
+        endpointUrl: string;
         subscriptionKey: string;
-        publishDate: Date;
+        endpointRegion: string;
+        isStaging: boolean;
     }
 }
 
 const LUIS_API_BASE_URL = 'https://westus.api.cognitive.microsoft.com';
-// Alternative endpoint only for the service API in order to use the private endpoint deployed in EU
-const LUIS_SERVICE_API_BASE_URL = 'http://luis-europe-west-endpoint.cloudapp.net';
 const RETRY_OPTS = {
     retries: 10,
     factor: 2,
@@ -161,19 +210,16 @@ export class LuisApiClient extends EventEmitter {
         this.applicationId = config.applicationId;
         let baseUrl = config.baseUrl || LUIS_API_BASE_URL;
         this.serviceReq = request.defaults({
-            // XXX: the public service API use a slightly different path, so this should be changed in the future
-            baseUrl: `${LUIS_SERVICE_API_BASE_URL}/api/v2.0/apps/${this.applicationId}`,
-            qs: {
-                'subscription-key': config.subscriptionKey,
-                verbose: false,
-                spellCheck: false
+            baseUrl: `${baseUrl}/luis/v2.0/apps/`,
+            headers: {
+                'Ocp-Apim-Subscription-Key': config.subscriptionKey
             },
             json: true,
             simple: false,
             resolveWithFullResponse: true
         });
         this.provisionReq = request.defaults({
-            baseUrl: `${baseUrl}/luis/v1.0/prog/apps`,
+            baseUrl: `${baseUrl}/luis/api/v2.0/apps/`,
             headers: {
                 'Ocp-Apim-Subscription-Key': config.subscriptionKey
             },
@@ -210,15 +256,15 @@ export class LuisApiClient extends EventEmitter {
     /**
      * Executes `fn` once per each element in `items` in parallel but throttling the execution
      */
-    private throttler(fn: Function, items: any[]): Promise<any> {
-        let promises = items.map(item => this.promiseThrottle.add(fn.bind(this, item)));
+    private throttler(fn: Function, appVersion: string, items: any[]): Promise<any> {
+        let promises = items.map(item => this.promiseThrottle.add(fn.bind(this, appVersion, item)));
         return Promise.all(promises);
     }
 
     recognizeSentence(sentence: string): Promise<LuisApi.RecognitionResult> {
         let opts: request.Options = {
             method: 'GET',
-            uri: '',
+            uri: `/${this.applicationId}`,
             qs: { q: sentence }
         };
         return this.serviceReq(opts)
@@ -230,278 +276,216 @@ export class LuisApiClient extends EventEmitter {
 
                 this.emit('recognizeSentence', sentence);
                 return {
-                    sentence: res.body.query,
-                    intent: res.body.topScoringIntent.intent,
+                    query: res.body.query,
+                    topScoringIntent: res.body.topScoringIntent,
+                    intents: res.body.intents,
                     entities: res.body.entities.map((entity: any) => {
                         return {
                             entity: entity.entity,
                             type: entity.type,
                             startIndex: entity.startIndex,
-                            endIndex: entity.endIndex
+                            endIndex: entity.endIndex,
+                            score: entity.score
                         } as LuisApi.RecognizedEntity;
                     })
                 } as LuisApi.RecognitionResult;
             });
     }
 
-    recognizeSentences(sentences: string[]): Promise<LuisApi.RecognitionResult[]> {
+    recognizeSentences(queries: string[]): Promise<LuisApi.RecognitionResult[]> {
         let promiseThrottle = new PromiseThrottle({
             requestsPerSecond: SERVICE_API_REQUESTS_PER_SECOND,
             promiseImplementation: Promise
         });
-        let promises = sentences.map(sentence => promiseThrottle.add(this.recognizeSentence.bind(this, sentence)));
+        let promises = queries.map(query => promiseThrottle.add(this.recognizeSentence.bind(this, query)));
         return Promise.all(promises) as Promise<LuisApi.RecognitionResult[]>;
     }
 
-    getApp(): Promise<LuisApi.AppInfo> {
+    getApp(): Promise<LuisApi.AppInfoGET> {
         let opts: request.Options = {
             method: 'GET',
-            uri: this.applicationId
+            uri: `/${this.applicationId}`
         };
         return this.retryRequest(opts, 200)
             .then((res: RequestResponse) => res.body)
             .then(body => {
                 return {
-                    id: body.ID,
-                    name: body.Name,
-                    description: body.Description,
-                    culture: body.Culture,
-                    active: body.Active,
-                    numberOfIntents: body.NumberOfIntents,
-                    numberOfEntities: body.NumberOfEntities,
-                    isTrained: body.IsTrained
-                } as LuisApi.AppInfo;
+                    id: body.id,
+                    name: body.name,
+                    description: body.description,
+                    culture: body.culture
+                } as LuisApi.AppInfoGET;
             });
     }
 
-    getIntents(): Promise<LuisApi.IntentClassifier[]> {
+    getIntents(appVersion: string): Promise<LuisApi.IntentGET[]> {
         let opts: request.Options = {
             method: 'GET',
-            uri: `${this.applicationId}/intents`
+            uri: `/${this.applicationId}/versions/${appVersion}/intents`
         };
         return this.retryRequest(opts, 200)
-            .then((res: RequestResponse) => res.body.Result)
-            .then((intents) => intents.map((intent: any) => {
-                return {
-                    id: intent.id,
-                    name: intent.name
-                } as LuisApi.IntentClassifier;
-            }));
+            .then((res: RequestResponse) => res.body as LuisApi.IntentGET[]);
     }
 
-    createIntent(intentName: string): Promise<string> {
+    createIntent(appVersion: string, intent: LuisApi.IntentPOST): Promise<string> {
         let opts: request.Options = {
             method: 'POST',
-            uri: `${this.applicationId}/intents`,
-            body: { name: intentName }
+            uri: `/${this.applicationId}/versions/${appVersion}/intents`,
+            body: intent
         };
         return this.retryRequest(opts, 201)
-            .then((res: RequestResponse) => res.body)
-            .then(intentId => {
+            .then((res: RequestResponse) => {
                 this.emit('createIntent', {
-                    id: intentId,
-                    name: intentName
+                    id: res.body,
+                    name: intent.name
                 });
-                return intentId;
+                return res.body;
             });
     }
 
-    createIntents(intentNames: string[]): Promise<string[]> {
-        return this.throttler(this.createIntent, intentNames) as Promise<string[]>;
+    createIntents(appVersion: string, intents: LuisApi.IntentPOST[]): Promise<string[]> {
+        return this.throttler(this.createIntent, appVersion, intents) as Promise<string[]>;
     }
 
-    deleteIntent(intentId: string): Promise<void> {
+    deleteIntent(appVersion: string, intent: LuisApi.IntentDELETE): Promise<void> {
         let opts: request.Options = {
             method: 'DELETE',
-            uri: `${this.applicationId}/intents/${intentId}`
+            uri: `/${this.applicationId}/versions/${appVersion}/intents/${intent.id}`
         };
         return this.retryRequest(opts, 200)
             .then(() => {
-                this.emit('deleteIntent', intentId);
+                this.emit('deleteIntent', intent.id);
             });
     }
 
-    deleteIntents(intentIds: string[]): Promise<void> {
-        return this.throttler(this.deleteIntent, intentIds)
+    deleteIntents(appVersion: string, intents: LuisApi.IntentDELETE[]): Promise<void> {
+        return this.throttler(this.deleteIntent, appVersion, intents)
             .then(() => Promise.resolve());
 
     }
 
-    getEntities(): Promise<LuisApi.EntityExtractor[]> {
+    getEntities(appVersion: string): Promise<LuisApi.EntityGET[]> {
         let opts: request.Options = {
             method: 'GET',
-            uri: `${this.applicationId}/entities`
+            uri: `/${this.applicationId}/versions/${appVersion}/entities`
         };
         return this.retryRequest(opts, 200)
-            .then((res: RequestResponse) => res.body.Result)
-            .then((entities) => entities.map((entity: any) => {
-                return {
-                    id: entity.id,
-                    name: entity.name
-                } as LuisApi.EntityExtractor;
-            }));
+            .then((res: RequestResponse) => res.body as LuisApi.EntityGET[]);
     }
 
-    createEntity(entityName: string): Promise<string> {
+    createEntity(appVersion: string, entity: LuisApi.EntityPOST): Promise<string> {
         let opts: request.Options = {
             method: 'POST',
-            uri: `${this.applicationId}/entities`,
-            body: { name: entityName }
+            uri: `/${this.applicationId}/versions/${appVersion}/entities`,
+            body: entity
         };
         return this.retryRequest(opts, 201)
-            .then((res: RequestResponse) => res.body)
-            .then(entityId => {
+            .then((res: RequestResponse) => {
                 this.emit('createEntity', {
-                    id: entityId,
-                    name: entityName
+                    id: res.body,
+                    name: entity.name
                 });
-                return entityId;
-            });
+                return res.body;
+            })
+            .catch(err => console.log(JSON.stringify(err)));
     }
 
-    createEntities(entityNames: string[]): Promise<string[]> {
-        return this.throttler(this.createEntity, entityNames) as Promise<string[]>;
+    createEntities(appVersion: string, entities: LuisApi.EntityPOST[]): Promise<string[]> {
+        return this.throttler(this.createEntity, appVersion, entities) as Promise<string[]>;
     }
 
-    deleteEntity(entityId: string): Promise<void> {
+    deleteEntity(appVersion: string, entity: LuisApi.EntityDELETE): Promise<void> {
         let opts: request.Options = {
             method: 'DELETE',
-            uri: `${this.applicationId}/entities/${entityId}`
+            uri: `/${this.applicationId}/versions/${appVersion}/entities/${entity.id}`
         };
         return this.retryRequest(opts, 200)
             .then(() => {
-                this.emit('deleteEntity', entityId);
+                this.emit('deleteEntity', entity.id);
             });
     }
 
-    deleteEntities(entityIds: string[]): Promise<void> {
-        return this.throttler(this.deleteEntity, entityIds)
+    deleteEntities(appVersion: string, entities: LuisApi.EntityDELETE[]): Promise<void> {
+        return this.throttler(this.deleteEntity, appVersion, entities)
             .then(() => Promise.resolve());
     }
 
-    getPhraseLists(): Promise<LuisApi.PhraseList[]> {
+    getPhraseLists(appVersion: string): Promise<LuisApi.PhraseListGET[]> {
         let opts: request.Options = {
             method: 'GET',
-            uri: `${this.applicationId}/phraselists`
+            uri: `/${this.applicationId}/versions/${appVersion}/phraselists`
         };
         return this.retryRequest(opts, 200)
-            .then((res: RequestResponse) => res.body)
-            .then((phraseLists) => phraseLists.map((phraseList: any) => {
-                return {
-                    id: phraseList.Id.toString(),
-                    name: phraseList.Name,
-                    mode: phraseList.Mode.toLowerCase() === 'non-exchangeable' ?
-                        LuisApi.PhraseListModes.NonExchangeable : LuisApi.PhraseListModes.Exchangeable,
-                    isActive: phraseList.IsActive,
-                    editable: phraseList.Editable,
-                    phrases: phraseList.Phrases
-                } as LuisApi.PhraseList;
-            }));
+            .then((res: RequestResponse) => res.body as LuisApi.PhraseListGET[]);
     }
 
-    createPhraseList(phraseList: LuisApi.PhraseList): Promise<string> {
+    createPhraseList(appVersion: string, phraseList: LuisApi.PhraseListPOST): Promise<string> {
         let opts: request.Options = {
             method: 'POST',
-            uri: `${this.applicationId}/phraselists`,
-            body: {
-                    Name: phraseList.name,
-                    Mode: phraseList.mode === LuisApi.PhraseListModes.NonExchangeable ?
-                        'Non-exchangeable' : 'Exchangeable',
-                    IsActive: phraseList.isActive !== undefined ? phraseList.isActive : true,
-                    Editable: phraseList.editable !== undefined ? phraseList.editable : true,
-                    Phrases: phraseList.phrases
-                }
+            uri: `/${this.applicationId}/versions/${appVersion}/phraselists`,
+            body: phraseList
         };
         return this.retryRequest(opts, 201)
-            .then((res: RequestResponse) => res.body)
-            .then(phraseListId => {
+            .then((res: RequestResponse) => {
                 this.emit('createPhraseList', {
-                    id: phraseListId,
+                    id: res.body,
                     name: phraseList.name
                 });
-                return phraseListId;
+                return res.body;
             });
     }
 
-    createPhraseLists(phraseLists: LuisApi.PhraseList[]): Promise<string[]> {
-        return this.throttler(this.createPhraseList, phraseLists) as Promise<string[]>;
+    createPhraseLists(appVersion: string, phraseLists: LuisApi.PhraseListPOST[]): Promise<string[]> {
+        return this.throttler(this.createPhraseList, appVersion, phraseLists) as Promise<string[]>;
     }
 
-    deletePhraseList(phraseListId: string): Promise<void> {
+    deletePhraseList(appVersion: string, phraseList: LuisApi.PhraseListDELETE): Promise<void> {
         let opts: request.Options = {
             method: 'DELETE',
-            uri: `${this.applicationId}/phraselists/${phraseListId}`
+            uri: `/${this.applicationId}/versions/${appVersion}/phraselists/${phraseList.id}`
         };
         return this.retryRequest(opts, 200)
             .then(() => {
-                this.emit('deletePhraseList', phraseListId);
+                this.emit('deletePhraseList', phraseList.id);
             });
     }
 
-    deletePhraseLists(phraseListIds: string[]): Promise<void> {
-        return this.throttler(this.deletePhraseList, phraseListIds)
+    deletePhraseLists(appVersion: string, phraseLists: LuisApi.PhraseListDELETE[]): Promise<void> {
+        return this.throttler(this.deletePhraseList, appVersion, phraseLists)
             .then(() => Promise.resolve());
     }
 
-    getExamples(skip: number, count: number): Promise<LuisApi.LabeledUtterance[]> {
-        function mapEntities(entities: any[]): LuisApi.LabeledEntity[] {
-            return entities.map((entity: any) => {
-                return {
-                    name: entity.name,
-                    startToken: entity.indeces.startToken,
-                    endToken: entity.indeces.endToken,
-                    word: entity.word,
-                    isBuiltInExtractor: entity.isBuiltInExtractor
-                } as LuisApi.LabeledEntity;
-            });
-        }
-
+    getExamples(appVersion: string, skip: number, count: number): Promise<LuisApi.ExampleGET[]> {
         let opts: request.Options = {
             method: 'GET',
-            uri: `${this.applicationId}/examples`,
+            uri: `/${this.applicationId}/versions/${appVersion}/examples`,
             qs: { skip, count }
         };
         return this.retryRequest(opts, 200)
             .then((res: RequestResponse) => {
-                let examples = res.body;
-                if (examples.length) {
+                if (res.body.length) {
                     // Don't emit events once the last example has been reached
-                    this.emit('getExamples', skip, skip + examples.length - 1);
+                    this.emit('getExamples', skip, skip + res.body.length - 1);
                 }
-                return examples;
-            })
-            .then(examples => examples.map((example: any) => {
-                return {
-                    id: example.exampleId,
-                    utteranceText: example.utteranceText,
-                    tokenizedText: example.tokenizedText,
-                    intent: example.IntentsResults.Name,
-                    predictedIntents: example.PredictedIntentResults.map((intent: any) => {
-                        return {
-                            name: intent.Name,
-                            score: intent.score
-                        };
-                    }),
-                    entities: mapEntities(example.EntitiesResults),
-                    predictedEntities: mapEntities(example.PredictedEntitiesResults)
-                } as LuisApi.LabeledUtterance;
-            }));
+                return res.body as LuisApi.ExampleGET[];
+            });
     }
 
     /**
      * Get all the examples by concurrently getting bunches of examples in order to speed up the operation
      */
-    getAllExamples(): Promise<LuisApi.LabeledUtterance[]> {
-        let examplesBunches: LuisApi.LabeledUtterance[][] = [];
+    getAllExamples(appVersion: string): Promise<LuisApi.ExampleGET[]> {
+        let examplesBunches: LuisApi.ExampleGET[][] = [];
 
         // Recursively get examples in bunches of MAX_PARALLEL_EXAMPLES_REQUESTS parallel requests
         const getExamplesBunch = (skip: number = 0): Promise<void> => {
             // List of skip argument value to be used in getExamples call
             let skipList = Array.from(Array(MAX_PARALLEL_EXAMPLES_REQUESTS))
                 .map((e, i) => skip + i * MAX_EXAMPLES_COUNT);
-            let promises = skipList.map(skip => this.promiseThrottle.add(this.getExamples.bind(this, skip, MAX_EXAMPLES_COUNT)));
+            let promises = skipList.map(skip => this.promiseThrottle.add(
+                this.getExamples.bind(this, appVersion, skip, MAX_EXAMPLES_COUNT)));
             return Promise.all(promises)
-                .then((examplesBunch: LuisApi.LabeledUtterance[][]) => {
+                .then((examplesBunch: LuisApi.ExampleGET[][]) => {
                     let lastBunchFound = examplesBunch.some(bunch => {
                         if (bunch.length) {
                             examplesBunches.push(bunch);
@@ -518,110 +502,108 @@ export class LuisApiClient extends EventEmitter {
         return getExamplesBunch().then(() => _.flatten(examplesBunches));
     }
 
-    createExamples(examples: LuisApi.Example[]): Promise<string[]> {
+    createExamples(appVersion: string, examples: LuisApi.ExamplePOST[]): Promise<string[]> {
         // Create examples up to MAX_EXAMPLES_UPLOAD
-        let createLimitedExamples = (examples: LuisApi.Example[]) => {
+        let createLimitedExamples = (appVersion: string, examples: LuisApi.ExamplePOST[]) => {
             let opts: request.Options = {
                 method: 'POST',
-                uri: `${this.applicationId}/examples`,
+                uri: `/${this.applicationId}/versions/${appVersion}/examples`,
                 body: examples
             };
             return this.retryRequest(opts, 201)
-                .then((res: RequestResponse) => res.body)
-                .then((body: any[]) => {
-                    let errors = body.filter(r => r.hasError);
+                .then((res: RequestResponse) => {
+                    let errors = res.body.filter((r: any) => r.hasError);
                     if (errors.length) {
                         return Promise.reject(new Error('LuisApiClient: The following examples have errors:\n'
                             + JSON.stringify(errors, null, 2)));
                     }
                     this.emit('createExampleBunch', examples.length);
-                    return body.map(r => r.value.ExampleId.toString());
+                    return res.body.map((r: any) => r.value.ExampleId.toString());
                 });
         };
 
         // LUIS API supports up to 100 examples at the same time
         let examplesBunches = _.chunk(examples, MAX_EXAMPLES_UPLOAD);
-        return this.throttler(createLimitedExamples, examplesBunches)
+        return this.throttler(createLimitedExamples, appVersion, examplesBunches)
             .then(_.flatten);
     }
 
-    deleteExample(exampleId: string): Promise<void> {
+    deleteExample(appVersion: string, example: LuisApi.ExampleDELETE): Promise<void> {
         let opts: request.Options = {
             method: 'DELETE',
-            uri: `${this.applicationId}/examples/${exampleId}`
+            uri: `/${this.applicationId}/versions/${appVersion}/examples/${example.id}`
         };
         return this.retryRequest(opts, 200)
             .then(() => {
-                this.emit('deleteExample', exampleId);
+                this.emit('deleteExample', example.id);
             });
     }
 
-    deleteExamples(exampleIds: string[]): Promise<void> {
-        return this.throttler(this.deleteExample, exampleIds)
+    deleteExamples(appVersion: string, examples: LuisApi.ExampleDELETE[]): Promise<void> {
+        return this.throttler(this.deleteExample, appVersion, examples)
             .then(() => Promise.resolve());
     }
 
     private convertTrainingStatus(apiTrainingStatus: any[]): LuisApi.TrainingStatus {
         return apiTrainingStatus.map((modelStatus: any) => {
             let modelTrainingStatus: LuisApi.ModelTrainingStatus = {
-                modelId: modelStatus.ModelId,
-                status: modelStatus.Details.StatusId as LuisApi.TrainingStatuses,
-                exampleCount: modelStatus.Details.ExampleCount
+                modelId: modelStatus.modelId,
+                status: modelStatus.details.statusId as LuisApi.TrainingStatuses,
+                exampleCount: modelStatus.details.exampleCount
             };
-            if (modelTrainingStatus.status === LuisApi.TrainingStatuses.Failed) {
-                modelTrainingStatus.failureReason = modelStatus.Details.FailureReason;
+            if (modelTrainingStatus.status === LuisApi.TrainingStatuses.Fail) {
+                modelTrainingStatus.failureReason = modelStatus.details.failureReason;
             }
             return modelTrainingStatus;
         });
     }
 
-    startTraining(): Promise<LuisApi.TrainingStatus> {
+    startTraining(appVersion: string): Promise<LuisApi.TrainingStatus> {
         let opts: request.Options = {
             method: 'POST',
-            uri: `${this.applicationId}/train`
+            uri: `/${this.applicationId}/versions/${appVersion}/train`
         };
         return this.retryRequest(opts, 202)
-            .then((res: RequestResponse) => res.body)
-            .then(this.convertTrainingStatus);
+            .then((res: RequestResponse) => res.body);
     }
 
-    getTrainingStatus(): Promise<LuisApi.TrainingStatus> {
+    getTrainingStatus(appVersion: string): Promise<LuisApi.TrainingStatus> {
         let opts: request.Options = {
             method: 'GET',
-            uri: `${this.applicationId}/train`
+            uri: `/${this.applicationId}/versions/${appVersion}/train`
         };
         return this.retryRequest(opts, 200)
             .then((res: RequestResponse) => res.body)
             .then(this.convertTrainingStatus);
     }
 
-    publish(): Promise<LuisApi.PublishResult> {
+    publish(appVersion: string): Promise<LuisApi.PublishResult> {
         let opts: request.Options = {
             method: 'POST',
-            uri: `${this.applicationId}/publish`,
+            uri: `/${this.applicationId}/publish`,
             // We don't really know what this body is for but it must be included for the API to work
             body: {
-                BotFramework: { Enabled: false, AppId: '', SubscriptionKey: '', Endpoint: '' },
-                Slack: { Enabled: false, ClientId: '', ClientSecret: '', RedirectUri: '' },
-                PrivacyStatement: '',
-                TermsOfUse: ''
+                versionId: appVersion,
+                isStaging: false,
+                region: 'westus'
             }
         };
         return this.retryRequest(opts, 201)
             .then((res: RequestResponse) => res.body)
             .then(body => {
                 return {
-                    url: body.URL,
-                    subscriptionKey: body.SubscriptionKey,
-                    publishDate: new Date(body.PublishDate)
+                    endpointUrl: body.endpointUrl,
+                    subscriptionKey: body['subscription-key'],
+                    endpointRegion: body.endpointRegion,
+                    isStaging: body.isStaging
                 } as LuisApi.PublishResult;
             });
     }
 
-    export(): Promise<any> {
+    export(appVersion: string): Promise<any> {
         let opts: request.Options = {
             method: 'GET',
-            uri: `${this.applicationId}/export`
+            uri: `/${this.applicationId}/versions/${appVersion}/export`
         };
         return this.retryRequest(opts, 200)
             .then((res: RequestResponse) => res.body);

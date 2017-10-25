@@ -33,10 +33,10 @@ export interface PredictionError {
     text: string;
     tokenizedText?: string[];
     intent: string;
-    predictedIntents?: string[];
+    intentPredictions?: LuisApi.IntentPrediction[];
     ambiguousPredictedIntent?: boolean;
-    entities?: LuisApi.LabeledEntity[];
-    predictedEntities?: LuisApi.LabeledEntity[];
+    entities?: (LuisApi.EntityLabelExampleGET | LuisApi.EntityLabelExamplePOST)[];
+    predictedEntities?: LuisApi.EntityLabelExamplePOST[];
 }
 
 export interface PredictionResult {
@@ -68,8 +68,8 @@ export class LuisTrainer extends EventEmitter {
         this.luisApiClient = new LuisApiClient(config.luisApiClientConfig);
     }
 
-    export(): Promise<LuisModel.Model> {
-        return this.luisApiClient.export()
+    export(appVersion: string): Promise<LuisModel.Model> {
+        return this.luisApiClient.export(appVersion)
             .catch((reason: Error) => {
                 let err = new Error('Error trying to export the app') as any;
                 err.reason = reason.message;
@@ -77,14 +77,25 @@ export class LuisTrainer extends EventEmitter {
             });
     }
 
-    update(model: LuisModel.Model): Promise<void> {
-        return this.checkCulture(model.culture)
-            .then(() => this.updateIntents(model.intents.map(intent => intent.name)))
-            .then(() => this.updateEntities(model.entities.map(entity => entity.name)))
-            .then(() => this.updatePhraseLists(model.model_features))
-            .then(() => this.updateExamples(model.utterances))
-            .then(() => this.train())
-            .then(() => this.publish())
+    update(appVersion: string, model: LuisModel.Model): Promise<void> {
+        return this.checkCulture(appVersion, model.culture)
+            .then(() => this.updateIntents(appVersion, model.intents.map(
+                intent => {
+                    return {
+                        name: intent.name
+                    };
+            })))
+            .then(() => this.updateEntities(appVersion, model.entities.map(
+                entity => {
+                    return {
+                        name: entity.name
+                    };
+                }
+            )))
+            .then(() => this.updatePhraseLists(appVersion, model.model_features))
+            .then(() => this.updateExamples(appVersion, model.utterances))
+            .then(() => this.train(appVersion))
+            .then(() => this.publish(appVersion))
             .then(() => Promise.resolve());
     }
 
@@ -97,36 +108,41 @@ export class LuisTrainer extends EventEmitter {
      * with very close scores will be rounded to 2 decimals and will tie.
      *   Example: intent1's score: 0.87614, intent2's score: 0.87828. Both scores will be rounded to 0.88
      */
-    checkPredictions(): Promise<PredictionResult> {
+    checkPredictions(appVersion: string): Promise<PredictionResult> {
         // Return the top scoring predicted intents. In case of tie, all the top ones will be returned.
-        function getTopPredictedIntents(example: LuisApi.LabeledUtterance): string[] {
-            return example.predictedIntents
+        function getTopPredictedIntents(example: LuisApi.ExampleGET): LuisApi.IntentPrediction[] {
+            return example.intentPredictions
                 .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
                 .filter((predictedIntent, i, sortedPredictedIntents) =>
                     predictedIntent.score === sortedPredictedIntents[0].score)
-                .map(predictedIntent => predictedIntent.name);
+                .map(predictedIntent => {
+                    return {
+                        name: predictedIntent.name,
+                        score: predictedIntent.score
+                    };
+                });
         }
 
-        function matchPredictedEntities(example: LuisApi.LabeledUtterance): boolean {
+        function matchPredictedEntities(example: LuisApi.ExampleGET): boolean {
             // Predicted entities must have at least the labeled entities.
             // If there are some extra predicted entities, it is not an issue.
-            return _.differenceWith(example.entities, example.predictedEntities, _.isEqual).length === 0;
+            return _.differenceWith(example.entityLabels, example.entityPredictions, _.isEqual).length === 0;
         }
 
-        function matchTokenizedText(example: LuisApi.LabeledUtterance): boolean {
-            return _.isEqual(example.tokenizedText, LuisTrainer.tokenizeSentence(example.utteranceText));
+        function matchTokenizedText(example: LuisApi.ExampleGET): boolean {
+            return _.isEqual(example.tokenizedText, LuisTrainer.tokenizeSentence(example.text));
         }
 
         this.emit('startGetAllExamples');
         this.luisApiClient.on('getExamples', (first: number, last: number) =>
             this.emit('getExamples', first, last));
-        return this.luisApiClient.getAllExamples()
+        return this.luisApiClient.getAllExamples(appVersion)
             .then(examples => {
                 this.emit('endGetAllExamples', examples.length);
                 // Debug stuff
                 // let sortedExamples = examples.sort((a, b) => a.utteranceText.localeCompare(b.utteranceText));
                 // sortedExamples = sortedExamples.map(example => {
-                //     example.predictedIntents = example.predictedIntents.sort((a, b) => a.name.localeCompare(b.name));
+                //     example.intentPredictions = example.intentPredictions.sort((a, b) => a.name.localeCompare(b.name));
                 //     return example;
                 // });
                 // require('fs').writeFileSync(`all-examples-${new Date().toJSON()}.json`, JSON.stringify(sortedExamples, null, 2), 'utf8');
@@ -137,34 +153,42 @@ export class LuisTrainer extends EventEmitter {
                     // It also checks the tokenization to ensure our algorithm is working as expected.
                     .map(example => {
                         let error: PredictionError = {
-                            text: example.utteranceText,
-                            intent: example.intent
+                            text: example.text,
+                            intent: example.intentLabel
                         };
 
                         let topPredictedIntents = getTopPredictedIntents(example);
-                        if (topPredictedIntents.indexOf(example.intent) === -1) {
+                        if (topPredictedIntents.findIndex(element => element.name === example.intentLabel) === -1) {
                             // None of the top scoring predicted intents matches the labeled one
                             error.ambiguousPredictedIntent = false;
-                            error.predictedIntents = topPredictedIntents;
+                            error.intentPredictions = topPredictedIntents;
                         } else if (topPredictedIntents.length > 1) {
                             // The labeled intent is one of the top scoring predicted ones
                             // but they all share the same score
                             error.ambiguousPredictedIntent = true;
-                            error.predictedIntents = topPredictedIntents;
+                            error.intentPredictions = topPredictedIntents;
                         } else {
                             // The labeled intent matches the only one top scoring predicted intent
                         }
 
                         if (!matchPredictedEntities(example)) {
-                            error.entities = example.entities;
-                            error.predictedEntities = example.predictedEntities;
+                            error.entities = example.entityLabels;
+                            error.predictedEntities = example.entityPredictions.map(
+                                entityPrediction => {
+                                    return {
+                                        entityName: entityPrediction.entityName,
+                                        startCharIndex: entityPrediction.startIndex,
+                                        endCharIndex: entityPrediction.endIndex
+                                    };
+                                }
+                            );
                         }
 
                         if (!matchTokenizedText(example)) {
                             error.tokenizedText = example.tokenizedText;
                         }
 
-                        if (error.predictedIntents || error.predictedEntities || error.tokenizedText) {
+                        if (error.intentPredictions || error.predictedEntities || error.tokenizedText) {
                             return error;
                         } else {
                             return null;
@@ -173,12 +197,12 @@ export class LuisTrainer extends EventEmitter {
                     .filter(example => example !== null);
 
                 // Calculate stats
-                let exampleCounter = _.countBy(examples, example => example.intent);
+                let exampleCounter = _.countBy(examples, example => example.intentLabel);
                 let intentErrorCounter = _.countBy(
-                    errors.filter(error => error.predictedIntents && !error.ambiguousPredictedIntent),
+                    errors.filter(error => error.intentPredictions && !error.ambiguousPredictedIntent),
                     error => error.intent);
                 let ambiguousIntentCounter = _.countBy(
-                    errors.filter(error => error.predictedIntents && error.ambiguousPredictedIntent),
+                    errors.filter(error => error.intentPredictions && error.ambiguousPredictedIntent),
                     error => error.intent);
                 let stats: PredictionStats = new Map();
                 _.forEach(exampleCounter, (counter, intent) => {
@@ -203,16 +227,15 @@ export class LuisTrainer extends EventEmitter {
      */
     testExamples(examples: LuisModel.Utterance[]): Promise<PredictionResult> {
         function matchRecognizedEntities(
-            labeledEntities: LuisApi.LabeledEntity[],
+            labeledEntities: LuisApi.EntityLabelExamplePOST[],
             recognizedEntities: LuisApi.RecognizedEntity[]): boolean {
             // Recognized entities must have at least the labeled entities.
             // If there are some extra recognized entities, it is not an issue.
-            return _.differenceWith(labeledEntities, recognizedEntities,
-                (labeled: LuisApi.LabeledEntity, recognized: LuisApi.RecognizedEntity) =>
-                    labeled.name === recognized.type &&
-                    labeled.word === recognized.entity &&
-                    labeled.startToken === recognized.startIndex &&
-                    labeled.endToken === recognized.endIndex
+            return _.differenceWith<any>(labeledEntities, recognizedEntities,
+                (labeled: LuisApi.EntityLabelExamplePOST, recognized: LuisApi.RecognizedEntity) =>
+                    labeled.entityName === recognized.entity &&
+                    labeled.startCharIndex === recognized.startIndex &&
+                    labeled.endCharIndex === recognized.endIndex
             ).length === 0;
         }
 
@@ -231,36 +254,37 @@ export class LuisTrainer extends EventEmitter {
                         };
 
                         // Compare intents
-                        if (example.intent !== recognitionResult.intent) {
+                        if (example.intent !== recognitionResult.topScoringIntent.intent) {
                             error.ambiguousPredictedIntent = false;
-                            error.predictedIntents = [recognitionResult.intent];
+                            error.intentPredictions = [
+                                {
+                                    name: recognitionResult.topScoringIntent.intent,
+                                    score: recognitionResult.topScoringIntent.score
+                                }
+                            ];
                         }
 
                         // Compare entities
                         let labeledEntities = example.entities.map(entity => {
                             let foundEntity = LuisTrainer.findEntity(example.text, entity.startPos, entity.endPos);
                             return {
-                                name: entity.entity,
-                                startToken: foundEntity.startChar,
-                                endToken: foundEntity.endChar,
-                                word: foundEntity.word,
-                                isBuiltInExtractor: false
-                            } as LuisApi.LabeledEntity;
+                                entityName: foundEntity.word,
+                                startCharIndex: foundEntity.startChar,
+                                endCharIndex: foundEntity.endChar
+                            };
                         });
                         if (!matchRecognizedEntities(labeledEntities, recognitionResult.entities)) {
                             error.entities = labeledEntities;
                             error.predictedEntities = recognitionResult.entities.map(entity => {
                                 return {
-                                    name: entity.type,
-                                    startToken: entity.startIndex,
-                                    endToken: entity.endIndex,
-                                    word: entity.entity,
-                                    isBuiltInExtractor: false
-                                } as LuisApi.LabeledEntity;
+                                    entityName: entity.entity,
+                                    startCharIndex: entity.startIndex,
+                                    endCharIndex: entity.endIndex
+                                };
                             });
                         }
 
-                        if (error.predictedIntents || error.predictedEntities) {
+                        if (error.intentPredictions || error.predictedEntities) {
                             return error;
                         } else {
                             return null;
@@ -270,7 +294,7 @@ export class LuisTrainer extends EventEmitter {
 
                 // Calculate stats
                 let exampleCounter = _.countBy(examples, example => example.intent);
-                let intentErrorCounter = _.countBy(errors.filter(error => error.predictedIntents), error => error.intent);
+                let intentErrorCounter = _.countBy(errors.filter(error => error.intentPredictions), error => error.intent);
                 let stats: PredictionStats = new Map();
                 _.forEach(exampleCounter, (counter, intent) => {
                     stats.set(intent, {
@@ -296,7 +320,7 @@ export class LuisTrainer extends EventEmitter {
         return Promise.reject(err);
     }
 
-    private checkCulture(culture: string): Promise<void> {
+    private checkCulture(appVersion: string, culture: string): Promise<void> {
         return this.luisApiClient.getApp()
             .then(appInfo => {
                 if (appInfo.culture === culture) {
@@ -311,22 +335,21 @@ export class LuisTrainer extends EventEmitter {
             .catch(err => LuisTrainer.wrapError(err, 'Error trying to check the culture'));
     }
 
-    private updateIntents(newIntents: string[]): Promise<void> {
-        return this.luisApiClient.getIntents()
+    private updateIntents(appVersion: string, intents: LuisApi.IntentPOST[]): Promise<void> {
+        return this.luisApiClient.getIntents(appVersion)
             .then(oldIntents => {
-                let intentIdsToBeDeleted = _.differenceWith(oldIntents, newIntents,
-                    (a: LuisApi.IntentClassifier, b: string) => a.name === b
-                ).map(intent => intent.id);
-                let intentsToBeCreated = _.differenceWith(newIntents, oldIntents,
-                    (a: string, b: LuisApi.IntentClassifier) => a === b.name
+                let intentsToBeDeleted = _.differenceWith<any>(oldIntents, intents,
+                    (a: LuisApi.IntentGET, b: LuisApi.IntentPOST) => a.name === b.name);
+                let intentsToBeCreated = _.differenceWith<LuisApi.IntentPOST>(intents, oldIntents,
+                    (a: LuisApi.IntentPOST, b: LuisApi.IntentGET) => a.name === b.name
                 );
                 let stats: UpdateEvent = {
                     create: intentsToBeCreated.length,
-                    delete: intentIdsToBeDeleted.length
+                    delete: intentsToBeDeleted.length
                 };
                 this.emit('startUpdateIntents', stats);
-                return this.luisApiClient.deleteIntents(intentIdsToBeDeleted)
-                    .then(() => this.luisApiClient.createIntents(intentsToBeCreated))
+                return this.luisApiClient.deleteIntents(appVersion, intentsToBeDeleted)
+                    .then(() => this.luisApiClient.createIntents(appVersion, intentsToBeCreated))
                     .then(() => {
                         this.emit('endUpdateIntents', stats);
                     });
@@ -334,22 +357,22 @@ export class LuisTrainer extends EventEmitter {
             .catch(err => LuisTrainer.wrapError(err, 'Error trying to update intents'));
     }
 
-    private updateEntities(newEntities: string[]): Promise<void> {
-        return this.luisApiClient.getEntities()
+    private updateEntities(appVersion: string, entities: LuisApi.EntityPOST[]): Promise<void> {
+        return this.luisApiClient.getEntities(appVersion)
             .then(oldEntities => {
-                let entityIdsToBeDeleted = _.differenceWith(oldEntities, newEntities,
-                    (a: LuisApi.EntityExtractor, b: string) => a.name === b
-                ).map(entity => entity.id);
-                let entitiesToBeCreated = _.differenceWith(newEntities, oldEntities,
-                    (a: string, b: LuisApi.EntityExtractor) => a === b.name
+                let entitiesToBeDeleted = _.differenceWith<any>(
+                    oldEntities, entities,
+                    (a: LuisApi.EntityGET, b: LuisApi.EntityPOST) => a.name === b.name);
+                let entitiesToBeCreated = _.differenceWith<LuisApi.EntityPOST>(entities, oldEntities,
+                    (a: LuisApi.EntityPOST, b: LuisApi.EntityGET) => a.name === b.name
                 );
                 let stats: UpdateEvent = {
                     create: entitiesToBeCreated.length,
-                    delete: entityIdsToBeDeleted.length
+                    delete: entitiesToBeDeleted.length
                 };
                 this.emit('startUpdateEntities', stats);
-                return this.luisApiClient.deleteEntities(entityIdsToBeDeleted)
-                    .then(() => this.luisApiClient.createEntities(entitiesToBeCreated))
+                return this.luisApiClient.deleteEntities(appVersion, entitiesToBeDeleted)
+                    .then(() => this.luisApiClient.createEntities(appVersion, entitiesToBeCreated))
                     .then(() => {
                         this.emit('endUpdateEntities', stats);
                     });
@@ -357,39 +380,37 @@ export class LuisTrainer extends EventEmitter {
             .catch(err => LuisTrainer.wrapError(err, 'Error trying to update entities'));
     }
 
-    private updatePhraseLists(newModelPhraseLists: LuisModel.ModelFeature[]): Promise<void> {
+    private updatePhraseLists(appVersion: string, modelPhraseLists: LuisModel.ModelFeature[]): Promise<void> {
         /**
          * Compare phraseLists ignoring non-meaningful properties
          */
-        const comparePhraseLists = (a: LuisApi.PhraseList, b: LuisApi.PhraseList) => {
+        const comparePhraseLists = (a: any, b: any) => {
             return a.name === b.name &&
-                a.mode === b.mode &&
                 a.isActive === b.isActive &&
+                a.isExchangeable === b.isExchangeable &&
                 a.phrases === b.phrases;
         };
 
-        return this.luisApiClient.getPhraseLists()
+        return this.luisApiClient.getPhraseLists(appVersion)
             .then(oldPhraseLists => {
                 // Convert data from the model to the format used by the API
-                let newPhraseLists = newModelPhraseLists.map((phraseList: LuisModel.ModelFeature) => {
+                let phraseLists = modelPhraseLists.map((phraseList: LuisModel.ModelFeature) => {
                     return {
                         name: phraseList.name,
-                        mode: phraseList.mode === false ?
-                            LuisApi.PhraseListModes.NonExchangeable : LuisApi.PhraseListModes.Exchangeable,
                         isActive: phraseList.activated,
+                        isExchangeable: true,
                         phrases: phraseList.words
-                    } as LuisApi.PhraseList;
+                    } as LuisApi.PhraseListPOST;
                 });
-                let phraseListIdsToBeDeleted = _.differenceWith(oldPhraseLists, newPhraseLists, comparePhraseLists)
-                    .map(phraseList => phraseList.id);
-                let phraseListToBeCreated = _.differenceWith(newPhraseLists, oldPhraseLists, comparePhraseLists);
+                let phraseListsToBeDeleted = _.differenceWith<any>(oldPhraseLists, phraseLists, comparePhraseLists);
+                let phraseListToBeCreated = _.differenceWith<LuisApi.PhraseListPOST>(phraseLists, oldPhraseLists, comparePhraseLists);
                 let stats: UpdateEvent = {
                     create: phraseListToBeCreated.length,
-                    delete: phraseListIdsToBeDeleted.length
+                    delete: phraseListsToBeDeleted.length
                 };
                 this.emit('startUpdatePhraseLists', stats);
-                return this.luisApiClient.deletePhraseLists(phraseListIdsToBeDeleted)
-                    .then(() => this.luisApiClient.createPhraseLists(phraseListToBeCreated))
+                return this.luisApiClient.deletePhraseLists(appVersion, phraseListsToBeDeleted)
+                    .then(() => this.luisApiClient.createPhraseLists(appVersion, phraseListToBeCreated))
                     .then(() => {
                         this.emit('endUpdatePhraseLists', stats);
                     });
@@ -397,56 +418,58 @@ export class LuisTrainer extends EventEmitter {
             .catch(err => LuisTrainer.wrapError(err, 'Error trying to update phrase lists'));
     }
 
-    private updateExamples(newExamples: LuisModel.Utterance[]): Promise<void> {
+    private updateExamples(appVersion: string, modelExamples: LuisModel.Utterance[]): Promise<void> {
         this.emit('startGetAllExamples');
         this.luisApiClient.on('getExamples', (first: number, last: number) =>
             this.emit('getExamples', first, last));
-        return this.luisApiClient.getAllExamples()
+        return this.luisApiClient.getAllExamples(appVersion)
             .then(oldExamples => {
                 this.emit('endGetAllExamples', oldExamples.length);
                 // Examples to be deleted will be those whose texts are no longer needed.
                 // It could happen that some examples share texts but have different intent or entities
                 // but those will be overwritten when uploading the so called `examplesToBeCreated`.
-                let exampleIdsToBeDeleted = _.differenceWith(oldExamples, newExamples,
-                    (a: LuisApi.LabeledUtterance, b: LuisModel.Utterance) => a.utteranceText === b.text
-                ).map((example: LuisApi.LabeledUtterance) => example.id);
+                let examplesToBeDeleted = _.differenceWith<any>(oldExamples, modelExamples,
+                    (a: LuisApi.ExampleGET, b: LuisModel.Utterance) => a.text === b.text);
 
                 // Examples to be uploaded (overwriting those that already exist with the same text although
                 // they have different intents or entities) will be those that don't already exist or
                 // differs from existing one by the intent or entities.
-                let examplesToBeCreated = _.differenceWith(newExamples, oldExamples,
-                    (a: LuisModel.Utterance, b: LuisApi.LabeledUtterance) => {
-                        let eq = a.text === b.utteranceText &&
-                            a.intent === b.intent &&
-                            a.entities.length === b.entities.length &&
+                let examplesToBeCreated = _.differenceWith<any>(modelExamples, oldExamples,
+                    (a: LuisModel.Utterance, b: LuisApi.ExampleGET) => {
+                        let eq = a.text === b.text &&
+                            a.intent === b.intentLabel &&
+                            a.entities.length === b.entityLabels.length &&
                             // Compare array of entities w/o assuming the same order
-                            a.entities.length === _.intersectionWith(a.entities, b.entities,
-                                (ae: LuisModel.EntityPosition, be: LuisApi.LabeledEntity) =>
-                                    ae.entity === be.name && ae.startPos === be.startToken && ae.endPos === be.endToken
+                            a.entities.length === _.intersectionWith<any>(a.entities, b.entityLabels,
+                                (ae: LuisModel.EntityPosition, be: LuisApi.EntityLabelExamplePOST) =>
+                                    ae.entity === be.entityName && ae.startPos === be.startCharIndex && ae.endPos === be.endCharIndex
                             ).length;
                         return eq;
                     }
                 )
                 // Convert data from the model to the format used by the API
                 .map((example: LuisModel.Utterance) => {
+                    let entityLabels = example.entities.map(entity => {
+                        let foundEntity = LuisTrainer.findEntity(example.text, entity.startPos, entity.endPos);
+                        return {
+                            entityName: entity.entity,
+                            startCharIndex: foundEntity.startChar,
+                            endCharIndex: foundEntity.endChar
+                        };
+                    });
+                    entityLabels = (entityLabels.length === 0) ? null : entityLabels;
                     return {
-                        exampleText: example.text,
-                        selectedIntentName: example.intent,
-                        entityLabels: example.entities.map(entity => {
-                            let foundEntity = LuisTrainer.findEntity(example.text, entity.startPos, entity.endPos);
-                            return {
-                                entityType: entity.entity,
-                                startToken: foundEntity.startChar,
-                                endToken: foundEntity.endChar
-                            } as LuisApi.Entity;
-                        })
-                    } as LuisApi.Example;
+                        text: example.text,
+                        intentName: example.intent,
+                        entityLabels: entityLabels
+                    } as LuisApi.ExamplePOST;
                 });
 
                 // Debug stuff for hunting examples that are recurrently created even when theoretically they already exist
                 // Won't be removed until we are completely sure that everything is going well
                 // require('fs').writeFileSync('old.txt', oldExamples.map(example => example.utteranceText).sort().join('\n'), 'utf-8');
-                // require('fs').writeFileSync('create.txt', examplesToBeCreated.map(example => example.exampleText).sort().join('\n'), 'utf-8');
+                // require('fs').writeFileSync('create.txt', examplesToBeCreated.map(example =>
+                //   example.exampleText).sort().join('\n'), 'utf-8');
                 // let SENTENCE = '';
                 // console.log('='.repeat(50));
                 // console.log(newExamples.filter(example => example.text === SENTENCE));
@@ -458,15 +481,15 @@ export class LuisTrainer extends EventEmitter {
 
                 let stats: UpdateEvent = {
                     create: examplesToBeCreated.length,
-                    delete: exampleIdsToBeDeleted.length
+                    delete: examplesToBeDeleted.length
                 };
                 this.emit('startUpdateExamples', stats);
                 this.luisApiClient.on('deleteExample', (exampleId: string) =>
                     this.emit('deleteExample', exampleId));
                 this.luisApiClient.on('createExampleBunch', (bunchLength: number) =>
                     this.emit('createExampleBunch', bunchLength));
-                return this.luisApiClient.deleteExamples(exampleIdsToBeDeleted)
-                    .then(() => this.luisApiClient.createExamples(examplesToBeCreated))
+                return this.luisApiClient.deleteExamples(appVersion, examplesToBeDeleted)
+                    .then(() => this.luisApiClient.createExamples(appVersion, examplesToBeCreated))
                     .then(() => {
                         this.emit('endUpdateExamples', stats);
                     });
@@ -474,7 +497,7 @@ export class LuisTrainer extends EventEmitter {
             .catch(err => LuisTrainer.wrapError(err, 'Error trying to update examples'));
     }
 
-    private train(): Promise<void> {
+    private train(appVersion: string): Promise<void> {
         const delay = (t: number): Promise<void> => {
             return new Promise<void>(resolve => {
                 setTimeout(resolve, t);
@@ -483,7 +506,7 @@ export class LuisTrainer extends EventEmitter {
 
         const waitForTraining = (): Promise<void> => {
             return delay(TRAINING_STATUS_POLLING_INTERVAL)
-                .then(() => this.luisApiClient.getTrainingStatus())
+                .then(() => this.luisApiClient.getTrainingStatus(appVersion))
                 .then((trainingStatus: LuisApi.TrainingStatus) => {
                     // Debug stuff
                     // console.log(trainingStatus.map(ts => ts.status).join(''));
@@ -491,14 +514,14 @@ export class LuisTrainer extends EventEmitter {
                         // The training has finished when the status is "Success", "Up to date" or "Failed".
                         modelStatus.status === LuisApi.TrainingStatuses.Success ||
                         modelStatus.status === LuisApi.TrainingStatuses.UpToDate ||
-                        modelStatus.status === LuisApi.TrainingStatuses.Failed);
+                        modelStatus.status === LuisApi.TrainingStatuses.Fail);
                     this.emit('trainingProgress', finishedModels.length, trainingStatus.length);
                     if (finishedModels.length < trainingStatus.length) {
                         return waitForTraining();
                     }
                     // Look for failures
                     let failedModels = trainingStatus
-                        .filter(modelStatus => modelStatus.status === LuisApi.TrainingStatuses.Failed);
+                        .filter(modelStatus => modelStatus.status === LuisApi.TrainingStatuses.Fail);
                     if (failedModels.length) {
                         let err = new Error(
                             `${failedModels.length} model(s) have failed with the following reasons:\n` +
@@ -514,7 +537,7 @@ export class LuisTrainer extends EventEmitter {
         };
 
         this.emit('startTraining');
-        return this.luisApiClient.startTraining()
+        return this.luisApiClient.startTraining(appVersion)
             .then((trainingStatus) => {
                 // Debug stuff
                 // console.log(trainingStatus.map(ts => ts.status).join(''));
@@ -524,9 +547,9 @@ export class LuisTrainer extends EventEmitter {
             .catch(err => LuisTrainer.wrapError(err, 'Error trying to train models'));
     }
 
-    private publish(): Promise<void> {
+    private publish(appVersion: string): Promise<void> {
         this.emit('startPublish');
-        return this.luisApiClient.publish()
+        return this.luisApiClient.publish(appVersion)
             .then(publishResult => {
                 this.emit('endPublish');
             })
