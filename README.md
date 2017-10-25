@@ -23,7 +23,7 @@ Type `./bin/luis-cli -h` to get more info about the available commands and gener
 To know more about one command, type `./bin/luis-cli <command> -h`.
 
 For example: to update, to train and to publish a concrete LUIS application version based on a new LUIS model:
-`./bin/luis-cli update -s aac4012305e94ffebe2fa8408954aab3 -a b073cd3d-3b86-4367-813a-638840c83e3c -m ./training_model.json -v 0.3`
+`./bin/luis-cli update -s aac4012305e94ffebe2fa8408954aab3 -a b073cd3d-3b86-4367-813a-638840c83e3c -m ./training_model.json -v 0.3 -r westus -t false`
 
 For additional information about LUIS training models, please visit: https://github.com/Telefonica/language-model-converter
 

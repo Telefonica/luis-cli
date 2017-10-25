@@ -22,6 +22,8 @@ const PromiseThrottle = require('promise-throttle');
 import { EventEmitter } from 'events';
 import { RequestResponse } from 'request';
 
+const DEFAULT_REGION = 'westus';
+
 export namespace LuisApi {
     /* See: https://westus.dev.cognitive.microsoft.com/docs/services/5890b47c39e2bb17b84a55ff/operations/5890b47c39e2bb052c5b9c37 */
     export interface AppInfoGET {
@@ -577,15 +579,15 @@ export class LuisApiClient extends EventEmitter {
             .then(this.convertTrainingStatus);
     }
 
-    publish(appVersion: string): Promise<LuisApi.PublishResult> {
+    publish(appVersion: string, region?: string, isStaging?: boolean): Promise<LuisApi.PublishResult> {
         let opts: request.Options = {
             method: 'POST',
             uri: `/${this.applicationId}/publish`,
             // We don't really know what this body is for but it must be included for the API to work
             body: {
                 versionId: appVersion,
-                isStaging: false,
-                region: 'westus'
+                isStaging: !!isStaging,
+                region: region || DEFAULT_REGION
             }
         };
         return this.retryRequest(opts, 201)

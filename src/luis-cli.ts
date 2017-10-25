@@ -41,12 +41,16 @@ program
     .option('-a, --application-id <application-id>', 'LUIS application id (also got from the LUIS_APPLICATION_ID env var)')
     .option('-m, --model <filename>', 'JSON file containing the model to upload to the LUIS application')
     .option('-v, --app-version <app-version>', 'The version of the application to update')
+    .option('-r, --region <region>', 'The region where the version of the application will be published. ' +
+    'Possible values: "westus", "eastus2", "westcentralus" or "southeastasia". Default: "westus"')
+    .option('-t, --is-staging <is-staging>', 'Flag indication if the publication is for the staging environment. ' +
+        'Possible values: "true" or "false". Default: false.')
     .action(options => selectRunner(Commands.Update, options))
     .on('--help', function () {
         console.log('  Example:');
         console.log();
         console.log(`    Update an application using the model from the file 'model.json':`);
-        console.log('      $ luis-cli update -a XXX -m model.json -s YYY');
+        console.log('      $ luis-cli update -a XXX -m model.json -s YYY -v 0.1 -r westus');
     });
 
 program
@@ -66,13 +70,13 @@ program
     .command('check')
     .description(`Check a trained LUIS application to verify whether each example's intent and entities match the predicted ones`)
     .option('-a, --application-id <application-id>', 'LUIS application id (also got from the LUIS_APPLICATION_ID env var)')
-    .option('-r, --errors <filename>', `JSON file where prediction errors will be stored`)
+    .option('-f, --errors-filename <filename>', `JSON file where prediction errors will be stored`)
     .action(options => selectRunner(Commands.CheckPredictions, options))
     .on('--help', function () {
         console.log('  Example:');
         console.log();
         console.log(`    Check whether an application correctly predict intents and entities and save differences to 'errors.json':`);
-        console.log('      $ luis-cli check -a XXX -r errors.json -s YYY');
+        console.log('      $ luis-cli check -a XXX -f errors.json -s YYY');
     });
 
 program
@@ -80,7 +84,7 @@ program
     .description(`Test a set of examples against a trained application to verify the correct recognition of intents and entities`)
     .option('-a, --application-id <application-id>', 'LUIS application id (also got from the LUIS_APPLICATION_ID env var)')
     .option('-m, --model <filename>', 'JSON file containing the model whose examples will be used to test the LUIS application')
-    .option('-r, --errors <filename>', `JSON file where prediction errors will be stored`)
+    .option('-f, --errors-filename <filename>', `JSON file where prediction errors will be stored`)
     .action(options => selectRunner(Commands.TestExamples, options))
     .on('--help', function () {
         console.log('  Example:');
@@ -136,7 +140,7 @@ function selectRunner(command: Commands, options: any) {
             if (!options.model) {
                 printError('missing JSON file from which the model will be read. Provide one through the `-m, --model` option.');
             }
-            runner = updateApp(luisTrainer, applicationId, options.appVersion, options.model);
+            runner = updateApp(luisTrainer, applicationId, options.appVersion, options.model, options.region, options.isStaging === 'true');
             break;
 
         case Commands.Export:
@@ -154,7 +158,8 @@ function selectRunner(command: Commands, options: any) {
                 printError('missing version of the model to update. Provide one through the `-v, --version` option.');
             }
             if (!options.errors) {
-                printError('missing JSON file to which the differences will be saved. Provide one through the `-r, --errors` option.');
+                printError('missing JSON file to which the differences will be saved. Provide one through the ' +
+                    '`-f, --errors-filename` option.');
             }
             runner = checkPrediction(luisTrainer, applicationId, options.appVersion, options.errors);
             break;
@@ -164,14 +169,16 @@ function selectRunner(command: Commands, options: any) {
                 printError('missing JSON file from which the examples will be read. Provide one through the `-m, --model` option.');
             }
             if (!options.errors) {
-                printError('missing JSON file to which the differences will be saved. Provide one through the `-r, --errors` option.');
+                printError('missing JSON file to which the differences will be saved. Provide one through the ' +
+                    '`-f, --errors-filename` option.');
             }
             runner = testExamples(luisTrainer, applicationId, options.model, options.errors);
             break;
     }
 }
 
-function updateApp(luisTrainer: LuisTrainer, applicationId: string, appVersion: string, modelFilename: string): Promise<number | void> {
+function updateApp(luisTrainer: LuisTrainer, applicationId: string, appVersion: string, modelFilename: string,
+    region?: string, isStaging?: boolean): Promise<number | void> {
     let model: LuisModel.Model;
     try {
         model = JSON.parse(fs.readFileSync(modelFilename, 'utf8'));
@@ -218,7 +225,7 @@ function updateApp(luisTrainer: LuisTrainer, applicationId: string, appVersion: 
     });
     luisTrainer.on('startUpdateExamples', (stats: UpdateEvent) => {
         console.log(`Updating examples: deleting ${stats.delete} examples no longer needed ` +
-            `and creating ${stats.create} new examples...`);
+            `and creating or updating ${stats.create} potentially new examples or which may have been updated...`);
 
         let deleted = 0;
         luisTrainer.on('deleteExample', () => {
@@ -262,7 +269,7 @@ function updateApp(luisTrainer: LuisTrainer, applicationId: string, appVersion: 
         console.log();
     });
 
-    return luisTrainer.update(appVersion, model)
+    return luisTrainer.update(appVersion, model, region, isStaging)
         .then(() => {
             console.log('The application has been successfully updated');
             return 0;
