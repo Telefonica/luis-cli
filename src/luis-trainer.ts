@@ -77,7 +77,7 @@ export class LuisTrainer extends EventEmitter {
             });
     }
 
-    update(appVersion: string, model: LuisModel.Model): Promise<void> {
+    update(appVersion: string, model: LuisModel.Model, region?: string, isStaging?: boolean): Promise<void> {
         return this.checkCulture(appVersion, model.culture)
             .then(() => this.updateIntents(appVersion, model.intents.map(
                 intent => {
@@ -95,7 +95,7 @@ export class LuisTrainer extends EventEmitter {
             .then(() => this.updatePhraseLists(appVersion, model.model_features))
             .then(() => this.updateExamples(appVersion, model.utterances))
             .then(() => this.train(appVersion))
-            .then(() => this.publish(appVersion))
+            .then(() => this.publish(appVersion, region, isStaging))
             .then(() => Promise.resolve());
     }
 
@@ -547,9 +547,9 @@ export class LuisTrainer extends EventEmitter {
             .catch(err => LuisTrainer.wrapError(err, 'Error trying to train models'));
     }
 
-    private publish(appVersion: string): Promise<void> {
+    private publish(appVersion: string, region?: string, isStaging?: boolean): Promise<void> {
         this.emit('startPublish');
-        return this.luisApiClient.publish(appVersion)
+        return this.luisApiClient.publish(appVersion, region, isStaging)
             .then(publishResult => {
                 this.emit('endPublish');
             })
