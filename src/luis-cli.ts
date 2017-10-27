@@ -22,7 +22,6 @@ import * as colors from 'colors';
 import { LuisTrainer, LuisTrainerConfig, UpdateEvent, PredictionResult } from './luis-trainer';
 import { Luis as LuisModel } from '@telefonica/language-model-converter/lib/luis-model';
 
-
 const DEFAULT_LUIS_ENDPOINT = 'https://westus.api.cognitive.microsoft.com';
 
 enum Commands { Update, Export, CheckPredictions, TestExamples }
@@ -33,7 +32,9 @@ const program = commander
     .usage('command [options]')
     .option('-e, --endpoint <endpoint>', `LUIS endpoint (also got from the LUIS_ENDPOINT env var) [${DEFAULT_LUIS_ENDPOINT}]`,
     DEFAULT_LUIS_ENDPOINT)
-    .option('-s, --subscription-key <subscription-key>', 'LUIS subscription key (also got from the LUIS_SUBSCRIPTION_KEY env var)');
+    .option('-s, --subscription-key <subscription-key>', 'LUIS subscription key (also got from the LUIS_SUBSCRIPTION_KEY env var)')
+    .option('-q, --requests-per-second <float-or-integer-number>', 'The maximum number of requests per second to send ' +
+    'to the authoring and service LUIS endpoint. Optional. Default value: 10 requests per second for each endpoint.');
 
 program
     .command('update')
@@ -44,7 +45,7 @@ program
     .option('-r, --region <region>', 'The region where the version of the application will be published. ' +
     'Possible values: "westus", "eastus2", "westcentralus" or "southeastasia". Default: "westus"')
     .option('-t, --is-staging <is-staging>', 'Flag indication if the publication is for the staging environment. ' +
-        'Possible values: "true" or "false". Default: false.')
+    'Possible values: "true" or "false". Default: false.')
     .action(options => selectRunner(Commands.Update, options))
     .on('--help', function () {
         console.log('  Example:');
@@ -70,7 +71,7 @@ program
     .command('check')
     .description(`Check a trained LUIS application to verify whether each example's intent and entities match the predicted ones`)
     .option('-a, --application-id <application-id>', 'LUIS application id (also got from the LUIS_APPLICATION_ID env var)')
-    .option('-f, --errors-filename <filename>', `JSON file where prediction errors will be stored`)
+    .option('-f, --errors <filename>', `JSON file where prediction errors will be stored`)
     .action(options => selectRunner(Commands.CheckPredictions, options))
     .on('--help', function () {
         console.log('  Example:');
@@ -84,7 +85,7 @@ program
     .description(`Test a set of examples against a trained application to verify the correct recognition of intents and entities`)
     .option('-a, --application-id <application-id>', 'LUIS application id (also got from the LUIS_APPLICATION_ID env var)')
     .option('-m, --model <filename>', 'JSON file containing the model whose examples will be used to test the LUIS application')
-    .option('-f, --errors-filename <filename>', `JSON file where prediction errors will be stored`)
+    .option('-f, --errors <filename>', `JSON file where prediction errors will be stored`)
     .action(options => selectRunner(Commands.TestExamples, options))
     .on('--help', function () {
         console.log('  Example:');
@@ -110,6 +111,7 @@ function selectRunner(command: Commands, options: any) {
     // Get values from env vars if not provided via options
     let endpoint = options.parent.endpoint || process.env.LUIS_ENDPOINT;
     let subscriptionKey = options.parent.subscriptionKey || process.env.LUIS_SUBSCRIPTION_KEY;
+    let requestsPerSecond = parseFloat(options.parent.requestsPerSecond || process.env.REQUESTS_PER_SECOND);
     let applicationId = options.applicationId || process.env.LUIS_APPLICATION_ID;
 
     // Check mandatory options
@@ -127,7 +129,8 @@ function selectRunner(command: Commands, options: any) {
         luisApiClientConfig: {
             baseUrl: endpoint,
             subscriptionKey: subscriptionKey,
-            applicationId: applicationId
+            applicationId: applicationId,
+            requestsPerSecond: requestsPerSecond
         }
     };
     let luisTrainer: LuisTrainer = new LuisTrainer(luisTrainerConfig);
@@ -159,7 +162,7 @@ function selectRunner(command: Commands, options: any) {
             }
             if (!options.errors) {
                 printError('missing JSON file to which the differences will be saved. Provide one through the ' +
-                    '`-f, --errors-filename` option.');
+                    '`-f, --errors` option.');
             }
             runner = checkPrediction(luisTrainer, applicationId, options.appVersion, options.errors);
             break;
@@ -170,7 +173,7 @@ function selectRunner(command: Commands, options: any) {
             }
             if (!options.errors) {
                 printError('missing JSON file to which the differences will be saved. Provide one through the ' +
-                    '`-f, --errors-filename` option.');
+                    '`-f, --errors` option.');
             }
             runner = testExamples(luisTrainer, applicationId, options.model, options.errors);
             break;
@@ -289,7 +292,7 @@ function exportApp(luisTrainer: LuisTrainer, applicationId: string, appVersion: 
 }
 
 function checkPrediction(luisTrainer: LuisTrainer, applicationId: string, appVersion: string,
-    errorsFilename: string): Promise<number | void> {
+    errors: string): Promise<number | void> {
     console.log(`Checking predictions for the application ${applicationId}...`);
 
     luisTrainer.on('startGetAllExamples', () => {
@@ -303,7 +306,7 @@ function checkPrediction(luisTrainer: LuisTrainer, applicationId: string, appVer
     return luisTrainer.checkPredictions(appVersion)
         .then(predictionResult => {
             if (predictionResult.errors.length) {
-                processPredictionResult(predictionResult, errorsFilename);
+                processPredictionResult(predictionResult, errors);
                 return predictionResult.errors.length;
             } else {
                 console.log('No prediction errors have been found!');
@@ -314,7 +317,7 @@ function checkPrediction(luisTrainer: LuisTrainer, applicationId: string, appVer
 }
 
 function testExamples(luisTrainer: LuisTrainer, applicationId: string, modelFilename: string,
-    errorsFilename: string): Promise<number | void> {
+    errors: string): Promise<number | void> {
     let model: LuisModel.Model;
     try {
         model = JSON.parse(fs.readFileSync(modelFilename, 'utf8'));
@@ -341,7 +344,7 @@ function testExamples(luisTrainer: LuisTrainer, applicationId: string, modelFile
     return luisTrainer.testExamples(model.utterances)
         .then(predictionResult => {
             if (predictionResult.errors.length) {
-                processPredictionResult(predictionResult, errorsFilename);
+                processPredictionResult(predictionResult, errors);
                 return predictionResult.errors.length;
             } else {
                 console.log('No recognition errors have been found!');
@@ -351,7 +354,7 @@ function testExamples(luisTrainer: LuisTrainer, applicationId: string, modelFile
         .catch(handleError);
 }
 
-function processPredictionResult(predictionResult: PredictionResult, errorsFilename: string) {
+function processPredictionResult(predictionResult: PredictionResult, errors: string) {
     // Print a summary of errors
     let intentErrors = predictionResult.errors.filter(error =>
         error.intentPredictions && !error.ambiguousPredictedIntent).length;
@@ -376,8 +379,8 @@ function processPredictionResult(predictionResult: PredictionResult, errorsFilen
 
     // Write the error details to the file
     let sortedErrors = predictionResult.errors.sort((a, b) => a.intent.localeCompare(b.intent));
-    fs.writeFileSync(errorsFilename, JSON.stringify(sortedErrors, null, 2));
-    console.log(`\nAll the prediction errors have been saved in "${errorsFilename}"`);
+    fs.writeFileSync(errors, JSON.stringify(sortedErrors, null, 2));
+    console.log(`\nAll the prediction errors have been saved in "${errors}"`);
 
     // Print intent stats
     console.log(`\n\n  ${colors.bold('INTENT PREDICTION ERRORS')}\n`);

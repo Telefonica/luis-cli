@@ -185,8 +185,8 @@ const RETRY_OPTS = {
     minTimeout: 1500
 };
 // Maximum number of parallel requests per second to send to the API (to minimize 429 rate errors)
-const REQUESTS_PER_SECOND = 4;
-const SERVICE_API_REQUESTS_PER_SECOND = 20;  // The private endpoint is not throttled
+const REQUESTS_PER_SECOND = 10;
+const SERVICE_API_REQUESTS_PER_SECOND = 10;  // The private endpoint is not throttled
 // count parameter of the getExamples API (the API doesn't support more than 100)
 const MAX_EXAMPLES_COUNT = 100;
 // Number of parallel getExamples requests to get all the examples (still rated by REQUESTS_PER_SECOND)
@@ -202,14 +202,14 @@ export interface LuisApiClientConfig {
 }
 
 export class LuisApiClient extends EventEmitter {
-    protected applicationId: string = null;
+    private config: LuisApiClientConfig;
     private readonly serviceReq: any;
     private readonly provisionReq: any;
     private readonly promiseThrottle: any;
 
     constructor(config: LuisApiClientConfig) {
         super();
-        this.applicationId = config.applicationId;
+        this.config = config;
         let baseUrl = config.baseUrl || LUIS_API_BASE_URL;
         this.serviceReq = request.defaults({
             baseUrl: `${baseUrl}/luis/v2.0/apps/`,
@@ -266,7 +266,7 @@ export class LuisApiClient extends EventEmitter {
     recognizeSentence(sentence: string): Promise<LuisApi.RecognitionResult> {
         let opts: request.Options = {
             method: 'GET',
-            uri: `/${this.applicationId}`,
+            uri: `/${this.config.applicationId}`,
             qs: { q: sentence }
         };
         return this.serviceReq(opts)
@@ -296,7 +296,7 @@ export class LuisApiClient extends EventEmitter {
 
     recognizeSentences(queries: string[]): Promise<LuisApi.RecognitionResult[]> {
         let promiseThrottle = new PromiseThrottle({
-            requestsPerSecond: SERVICE_API_REQUESTS_PER_SECOND,
+            requestsPerSecond: this.config.requestsPerSecond || SERVICE_API_REQUESTS_PER_SECOND,
             promiseImplementation: Promise
         });
         let promises = queries.map(query => promiseThrottle.add(this.recognizeSentence.bind(this, query)));
@@ -306,7 +306,7 @@ export class LuisApiClient extends EventEmitter {
     getApp(): Promise<LuisApi.AppInfoGET> {
         let opts: request.Options = {
             method: 'GET',
-            uri: `/${this.applicationId}`
+            uri: `/${this.config.applicationId}`
         };
         return this.retryRequest(opts, 200)
             .then((res: RequestResponse) => res.body)
@@ -323,7 +323,7 @@ export class LuisApiClient extends EventEmitter {
     getIntents(appVersion: string): Promise<LuisApi.IntentGET[]> {
         let opts: request.Options = {
             method: 'GET',
-            uri: `/${this.applicationId}/versions/${appVersion}/intents`
+            uri: `/${this.config.applicationId}/versions/${appVersion}/intents`
         };
         return this.retryRequest(opts, 200)
             .then((res: RequestResponse) => res.body as LuisApi.IntentGET[]);
@@ -332,7 +332,7 @@ export class LuisApiClient extends EventEmitter {
     createIntent(appVersion: string, intent: LuisApi.IntentPOST): Promise<string> {
         let opts: request.Options = {
             method: 'POST',
-            uri: `/${this.applicationId}/versions/${appVersion}/intents`,
+            uri: `/${this.config.applicationId}/versions/${appVersion}/intents`,
             body: intent
         };
         return this.retryRequest(opts, 201)
@@ -352,7 +352,7 @@ export class LuisApiClient extends EventEmitter {
     deleteIntent(appVersion: string, intent: LuisApi.IntentDELETE): Promise<void> {
         let opts: request.Options = {
             method: 'DELETE',
-            uri: `/${this.applicationId}/versions/${appVersion}/intents/${intent.id}`
+            uri: `/${this.config.applicationId}/versions/${appVersion}/intents/${intent.id}`
         };
         return this.retryRequest(opts, 200)
             .then(() => {
@@ -369,7 +369,7 @@ export class LuisApiClient extends EventEmitter {
     getEntities(appVersion: string): Promise<LuisApi.EntityGET[]> {
         let opts: request.Options = {
             method: 'GET',
-            uri: `/${this.applicationId}/versions/${appVersion}/entities`
+            uri: `/${this.config.applicationId}/versions/${appVersion}/entities`
         };
         return this.retryRequest(opts, 200)
             .then((res: RequestResponse) => res.body as LuisApi.EntityGET[]);
@@ -378,7 +378,7 @@ export class LuisApiClient extends EventEmitter {
     createEntity(appVersion: string, entity: LuisApi.EntityPOST): Promise<string> {
         let opts: request.Options = {
             method: 'POST',
-            uri: `/${this.applicationId}/versions/${appVersion}/entities`,
+            uri: `/${this.config.applicationId}/versions/${appVersion}/entities`,
             body: entity
         };
         return this.retryRequest(opts, 201)
@@ -399,7 +399,7 @@ export class LuisApiClient extends EventEmitter {
     deleteEntity(appVersion: string, entity: LuisApi.EntityDELETE): Promise<void> {
         let opts: request.Options = {
             method: 'DELETE',
-            uri: `/${this.applicationId}/versions/${appVersion}/entities/${entity.id}`
+            uri: `/${this.config.applicationId}/versions/${appVersion}/entities/${entity.id}`
         };
         return this.retryRequest(opts, 200)
             .then(() => {
@@ -415,7 +415,7 @@ export class LuisApiClient extends EventEmitter {
     getPhraseLists(appVersion: string): Promise<LuisApi.PhraseListGET[]> {
         let opts: request.Options = {
             method: 'GET',
-            uri: `/${this.applicationId}/versions/${appVersion}/phraselists`
+            uri: `/${this.config.applicationId}/versions/${appVersion}/phraselists`
         };
         return this.retryRequest(opts, 200)
             .then((res: RequestResponse) => res.body as LuisApi.PhraseListGET[]);
@@ -424,7 +424,7 @@ export class LuisApiClient extends EventEmitter {
     createPhraseList(appVersion: string, phraseList: LuisApi.PhraseListPOST): Promise<string> {
         let opts: request.Options = {
             method: 'POST',
-            uri: `/${this.applicationId}/versions/${appVersion}/phraselists`,
+            uri: `/${this.config.applicationId}/versions/${appVersion}/phraselists`,
             body: phraseList
         };
         return this.retryRequest(opts, 201)
@@ -444,7 +444,7 @@ export class LuisApiClient extends EventEmitter {
     deletePhraseList(appVersion: string, phraseList: LuisApi.PhraseListDELETE): Promise<void> {
         let opts: request.Options = {
             method: 'DELETE',
-            uri: `/${this.applicationId}/versions/${appVersion}/phraselists/${phraseList.id}`
+            uri: `/${this.config.applicationId}/versions/${appVersion}/phraselists/${phraseList.id}`
         };
         return this.retryRequest(opts, 200)
             .then(() => {
@@ -460,7 +460,7 @@ export class LuisApiClient extends EventEmitter {
     getExamples(appVersion: string, skip: number, count: number): Promise<LuisApi.ExampleGET[]> {
         let opts: request.Options = {
             method: 'GET',
-            uri: `/${this.applicationId}/versions/${appVersion}/examples`,
+            uri: `/${this.config.applicationId}/versions/${appVersion}/examples`,
             qs: { skip, count }
         };
         return this.retryRequest(opts, 200)
@@ -509,7 +509,7 @@ export class LuisApiClient extends EventEmitter {
         let createLimitedExamples = (appVersion: string, examples: LuisApi.ExamplePOST[]) => {
             let opts: request.Options = {
                 method: 'POST',
-                uri: `/${this.applicationId}/versions/${appVersion}/examples`,
+                uri: `/${this.config.applicationId}/versions/${appVersion}/examples`,
                 body: examples
             };
             return this.retryRequest(opts, 201)
@@ -533,7 +533,7 @@ export class LuisApiClient extends EventEmitter {
     deleteExample(appVersion: string, example: LuisApi.ExampleDELETE): Promise<void> {
         let opts: request.Options = {
             method: 'DELETE',
-            uri: `/${this.applicationId}/versions/${appVersion}/examples/${example.id}`
+            uri: `/${this.config.applicationId}/versions/${appVersion}/examples/${example.id}`
         };
         return this.retryRequest(opts, 200)
             .then(() => {
@@ -563,7 +563,7 @@ export class LuisApiClient extends EventEmitter {
     startTraining(appVersion: string): Promise<LuisApi.TrainingStatus> {
         let opts: request.Options = {
             method: 'POST',
-            uri: `/${this.applicationId}/versions/${appVersion}/train`
+            uri: `/${this.config.applicationId}/versions/${appVersion}/train`
         };
         return this.retryRequest(opts, 202)
             .then((res: RequestResponse) => res.body);
@@ -572,7 +572,7 @@ export class LuisApiClient extends EventEmitter {
     getTrainingStatus(appVersion: string): Promise<LuisApi.TrainingStatus> {
         let opts: request.Options = {
             method: 'GET',
-            uri: `/${this.applicationId}/versions/${appVersion}/train`
+            uri: `/${this.config.applicationId}/versions/${appVersion}/train`
         };
         return this.retryRequest(opts, 200)
             .then((res: RequestResponse) => res.body)
@@ -582,7 +582,7 @@ export class LuisApiClient extends EventEmitter {
     publish(appVersion: string, region?: string, isStaging?: boolean): Promise<LuisApi.PublishResult> {
         let opts: request.Options = {
             method: 'POST',
-            uri: `/${this.applicationId}/publish`,
+            uri: `/${this.config.applicationId}/publish`,
             // We don't really know what this body is for but it must be included for the API to work
             body: {
                 versionId: appVersion,
@@ -605,7 +605,7 @@ export class LuisApiClient extends EventEmitter {
     export(appVersion: string): Promise<any> {
         let opts: request.Options = {
             method: 'GET',
-            uri: `/${this.applicationId}/versions/${appVersion}/export`
+            uri: `/${this.config.applicationId}/versions/${appVersion}/export`
         };
         return this.retryRequest(opts, 200)
             .then((res: RequestResponse) => res.body);
