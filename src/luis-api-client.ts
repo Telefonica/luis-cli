@@ -263,6 +263,18 @@ export class LuisApiClient extends EventEmitter {
         return Promise.all(promises);
     }
 
+    private serializer(fn: Function, appVersion: string, items: any[]): Promise<any> {
+        var results: any[] = [];
+        return items.reduce(function(p, item) {
+            return p.then(function() {
+                return fn(appVersion, item).then(function(data: any) {
+                    results.push(data);
+                    return results;
+                });
+            });
+        }, Promise.resolve());
+    }
+
     recognizeSentence(sentence: string): Promise<LuisApi.RecognitionResult> {
         let opts: request.Options = {
             method: 'GET',
@@ -526,7 +538,7 @@ export class LuisApiClient extends EventEmitter {
 
         // LUIS API supports up to 100 examples at the same time
         let examplesBunches = _.chunk(examples, MAX_EXAMPLES_UPLOAD);
-        return this.throttler(createLimitedExamples, appVersion, examplesBunches)
+        return this.serializer(createLimitedExamples, appVersion, examplesBunches)
             .then(_.flatten);
     }
 
