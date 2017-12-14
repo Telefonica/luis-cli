@@ -341,7 +341,7 @@ function testExamples(luisTrainer: LuisTrainer, applicationId: string, modelFile
         }
     });
 
-    return luisTrainer.testExamples(model.utterances)
+    return luisTrainer.testExamples(model.utterances, model.luis_schema_version)
         .then(predictionResult => {
             if (predictionResult.errors.length) {
                 processPredictionResult(predictionResult, errors);

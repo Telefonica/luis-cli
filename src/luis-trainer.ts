@@ -84,7 +84,7 @@ export class LuisTrainer extends EventEmitter {
                     return {
                         name: intent.name
                     };
-            })))
+                })))
             .then(() => this.updateEntities(appVersion, model.entities.map(
                 entity => {
                     return {
@@ -93,7 +93,7 @@ export class LuisTrainer extends EventEmitter {
                 }
             )))
             .then(() => this.updatePhraseLists(appVersion, model.model_features))
-            .then(() => this.updateExamples(appVersion, model.utterances))
+            .then(() => this.updateExamples(appVersion, model.utterances, model.luis_schema_version))
             .then(() => this.train(appVersion))
             .then(() => this.publish(appVersion, region, isStaging))
             .then(() => Promise.resolve());
@@ -225,7 +225,7 @@ export class LuisTrainer extends EventEmitter {
      * Send a set of examples to be recognized by the application to verify that the expected intent
      * and entities match the labeled one.
      */
-    testExamples(examples: LuisModel.Utterance[]): Promise<PredictionResult> {
+    testExamples(examples: LuisModel.Utterance[], luisSchemaVersion: string): Promise<PredictionResult> {
         function matchRecognizedEntities(
             labeledEntities: LuisApi.EntityLabelExamplePOST[],
             recognizedEntities: LuisApi.RecognizedEntity[]): boolean {
@@ -266,7 +266,7 @@ export class LuisTrainer extends EventEmitter {
 
                         // Compare entities
                         let labeledEntities = example.entities.map(entity => {
-                            let foundEntity = LuisTrainer.findEntity(example.text, entity.startPos, entity.endPos);
+                            let foundEntity = LuisTrainer.findEntity(example.text, entity.startPos, entity.endPos, luisSchemaVersion);
                             return {
                                 entityName: foundEntity.word,
                                 startCharIndex: foundEntity.startChar,
@@ -418,7 +418,7 @@ export class LuisTrainer extends EventEmitter {
             .catch(err => LuisTrainer.wrapError(err, 'Error trying to update phrase lists'));
     }
 
-    private updateExamples(appVersion: string, modelExamples: LuisModel.Utterance[]): Promise<void> {
+    private updateExamples(appVersion: string, modelExamples: LuisModel.Utterance[], luisSchemaVersion: string): Promise<void> {
         this.emit('startGetAllExamples');
         this.luisApiClient.on('getExamples', (first: number, last: number) =>
             this.emit('getExamples', first, last));
@@ -447,23 +447,23 @@ export class LuisTrainer extends EventEmitter {
                         return eq;
                     }
                 )
-                // Convert data from the model to the format used by the API
-                .map((example: LuisModel.Utterance) => {
-                    let entityLabels = example.entities.map(entity => {
-                        let foundEntity = LuisTrainer.findEntity(example.text, entity.startPos, entity.endPos);
+                    // Convert data from the model to the format used by the API
+                    .map((example: LuisModel.Utterance) => {
+                        let entityLabels = example.entities.map(entity => {
+                            let foundEntity = LuisTrainer.findEntity(example.text, entity.startPos, entity.endPos, luisSchemaVersion);
+                            return {
+                                entityName: entity.entity,
+                                startCharIndex: foundEntity.startChar,
+                                endCharIndex: foundEntity.endChar
+                            };
+                        });
+                        entityLabels = (entityLabels.length === 0) ? null : entityLabels;
                         return {
-                            entityName: entity.entity,
-                            startCharIndex: foundEntity.startChar,
-                            endCharIndex: foundEntity.endChar
-                        };
+                            text: example.text,
+                            intentName: example.intent,
+                            entityLabels: entityLabels
+                        } as LuisApi.ExamplePOST;
                     });
-                    entityLabels = (entityLabels.length === 0) ? null : entityLabels;
-                    return {
-                        text: example.text,
-                        intentName: example.intent,
-                        entityLabels: entityLabels
-                    } as LuisApi.ExamplePOST;
-                });
 
                 // Debug stuff for hunting examples that are recurrently created even when theoretically they already exist
                 // Won't be removed until we are completely sure that everything is going well
@@ -578,7 +578,7 @@ export class LuisTrainer extends EventEmitter {
             '\u0370-\u0374\u0376-\u0377\u037A-\u037D\u0386\u0388-\u038A\u038C\u038E-\u03A1\u03A3-\u03FF' + // Greek and Coptic alphabets
             '\u0400-\u0481\u048A-\u0523'  // Cyrillic alphabet
             // Leaving the remaining alphabets for another brave person
-        ;
+            ;
         // A word is any number > 0 of WORD_CHARS
         const WORD = new RegExp(`^[${WORD_CHARS}]+`);
         // A non-word is any character not in WORD_CHARS and not a space
@@ -630,20 +630,28 @@ export class LuisTrainer extends EventEmitter {
     /**
      * Find the entity text inside the sentence from its start and end positions.
      */
-    private static findEntity(sentence: string, startPos: number, endPos: number): FoundEntity {
-        let tokens = LuisTrainer.splitSentenceByTokens(sentence);
+    private static findEntity(sentence: string, startPos: number, endPos: number, luisSchemaVersion: string): FoundEntity {
+        if (luisSchemaVersion.indexOf('1.') === 0) {
+            let tokens = LuisTrainer.splitSentenceByTokens(sentence);
 
-        if (startPos < 0 || startPos >= tokens.length || endPos < 0 || endPos >= tokens.length) {
-            throw new Error('Entity positions are out of range');
+            if (startPos < 0 || startPos >= tokens.length || endPos < 0 || endPos >= tokens.length) {
+                throw new Error('Entity positions are out of range');
+            }
+            let startChar = tokens[startPos].startChar;
+            let endChar = tokens[endPos].endChar;
+            let word = sentence.slice(startChar, endChar + 1);
+            return {
+                word,
+                startChar,
+                endChar
+            } as FoundEntity;
+        } else {
+            return {
+                word: sentence.substring(startPos, endPos + 1),
+                startChar: startPos,
+                endChar: endPos
+            } as FoundEntity;
         }
-        let startChar = tokens[startPos].startChar;
-        let endChar = tokens[endPos].endChar;
-        let word = sentence.slice(startChar, endChar + 1);
-        return {
-            word,
-            startChar,
-            endChar
-        } as FoundEntity;
     }
 
 }
