@@ -26,7 +26,7 @@ For example: to update, to train and to publish a concrete LUIS application vers
 `./bin/luis-cli update -s aac4012305e94ffebe2fa8408954aab3 -a b073cd3d-3b86-4367-813a-638840c83e3c -m ./training_model.json -v 0.3 -r westus -t false`
 
 Or to test a model:
-`./bin/luis-cli test -s aac4012305e94ffebe2fa8408954aab3 -a b073cd3d-3b86-4367-813a-638840c83e3c -m ./training_model.json -e ./errors.json -q 3`
+`./bin/luis-cli test -s aac4012305e94ffebe2fa8408954aab3 -a b073cd3d-3b86-4367-813a-638840c83e3c -m ./training_model.json -f ./errors.json -q 3`
 
 For additional information about LUIS training models, please visit: https://github.com/Telefonica/language-model-converter
 
