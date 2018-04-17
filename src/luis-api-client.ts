@@ -182,7 +182,7 @@ const LUIS_API_BASE_URL = 'https://westus.api.cognitive.microsoft.com';
 const RETRY_OPTS = {
     retries: 10,
     factor: 2,
-    minTimeout: 1500
+    minTimeout: 15000
 };
 // Maximum number of parallel requests per second to send to the API (to minimize 429 rate errors)
 const REQUESTS_PER_SECOND = 10;
@@ -211,7 +211,7 @@ export class LuisApiClient extends EventEmitter {
     constructor(config: LuisApiClientConfig) {
         super();
         this.config = config;
-        RETRY_OPTS.minTimeout = RETRY_OPTS.minTimeout || config.timeout;
+        RETRY_OPTS.minTimeout = config.timeout || RETRY_OPTS.minTimeout;
         let baseUrl = config.baseUrl || LUIS_API_BASE_URL;
         this.serviceReq = request.defaults({
             baseUrl: `${baseUrl}/luis/v2.0/apps/`,
