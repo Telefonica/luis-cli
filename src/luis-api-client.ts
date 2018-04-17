@@ -199,6 +199,7 @@ export interface LuisApiClientConfig {
     applicationId: string;
     subscriptionKey: string;
     requestsPerSecond?: number;
+    timeout?: number;
 }
 
 export class LuisApiClient extends EventEmitter {
@@ -210,6 +211,7 @@ export class LuisApiClient extends EventEmitter {
     constructor(config: LuisApiClientConfig) {
         super();
         this.config = config;
+        RETRY_OPTS.minTimeout = RETRY_OPTS.minTimeout || config.timeout;
         let baseUrl = config.baseUrl || LUIS_API_BASE_URL;
         this.serviceReq = request.defaults({
             baseUrl: `${baseUrl}/luis/v2.0/apps/`,
@@ -516,7 +518,7 @@ export class LuisApiClient extends EventEmitter {
         return getExamplesBunch().then(() => _.flatten(examplesBunches));
     }
 
-    createExamples(appVersion: string, examples: LuisApi.ExamplePOST[]): Promise<string[]> {
+    createExamples(appVersion: string, examples: LuisApi.ExamplePOST[]): Promise<{}[]> {
         // Create examples up to MAX_EXAMPLES_UPLOAD
         let createLimitedExamples = (appVersion: string, examples: LuisApi.ExamplePOST[]) => {
             let opts: request.Options = {

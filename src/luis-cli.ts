@@ -34,7 +34,8 @@ const program = commander
     DEFAULT_LUIS_ENDPOINT)
     .option('-s, --subscription-key <subscription-key>', 'LUIS subscription key (also got from the LUIS_SUBSCRIPTION_KEY env var)')
     .option('-q, --requests-per-second <float-or-integer-number>', 'The maximum number of requests per second to send ' +
-    'to the authoring and service LUIS endpoint. Optional. Default value: 10 requests per second for each endpoint.');
+    'to the authoring and service LUIS endpoint. Optional. Default value: 10 requests per second for each endpoint.')
+    .option('-i, --timeout <float-or-integer-number>', 'The timeout in milliseconds to wait for a response from the LUIS API');
 
 program
     .command('update')
@@ -112,6 +113,7 @@ function selectRunner(command: Commands, options: any) {
     let endpoint = options.parent.endpoint || process.env.LUIS_ENDPOINT;
     let subscriptionKey = options.parent.subscriptionKey || process.env.LUIS_SUBSCRIPTION_KEY;
     let requestsPerSecond = parseFloat(options.parent.requestsPerSecond || process.env.REQUESTS_PER_SECOND);
+    let timeout = parseFloat(options.parent.timeout || process.env.TIMEOUT);
     let applicationId = options.applicationId || process.env.LUIS_APPLICATION_ID;
 
     // Check mandatory options
@@ -130,7 +132,8 @@ function selectRunner(command: Commands, options: any) {
             baseUrl: endpoint,
             subscriptionKey: subscriptionKey,
             applicationId: applicationId,
-            requestsPerSecond: requestsPerSecond
+            requestsPerSecond: requestsPerSecond,
+            timeout: timeout
         }
     };
     let luisTrainer: LuisTrainer = new LuisTrainer(luisTrainerConfig);
