@@ -19,16 +19,15 @@
     "compile": "tsc",
     "lint": "tslint './src/**/*.ts'",
     "prepublish": "npm run build",
-    "security": "nsp check",
     "test": "npm run build && mocha -R spec lib/**/*.spec.js"
   },
   "dependencies": {
     "colors": "^1.1.2",
     "commander": "^2.11.0",
-    "lodash": "^4.17.4",
+    "lodash": "^4.17.11",
     "promise-retry": "^1.1.1",
     "promise-throttle": "^0.3.1",
-    "request": "^2.83.0",
+    "request": "^2.88.0",
     "request-promise-native": "^1.0.5",
     "sprintf-js": "^1.1.1"
   },
@@ -41,7 +40,6 @@
     "@types/request-promise-native": "^1.0.8",
     "@types/sprintf-js": "1.1.0",
     "mocha": "^4.0.1",
-    "nsp": "^2.8.1",
     "shx": "^0.2.2",
     "tslint": "^5.8.0",
     "typescript": "^2.5.3"
